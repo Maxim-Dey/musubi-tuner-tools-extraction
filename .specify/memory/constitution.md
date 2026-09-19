@@ -1,50 +1,146 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+# Musubi Tuner Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Language
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+All Spec Kit documentation MUST be in English, including this constitution, specifications,
+plans, tasks, analyses, and converge results. User dialogue, explanations, and approval
+requests MUST be in Russian.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+### II. Task Fidelity
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+The spec MUST record the original task, requirements, and scope. Agents MUST NOT change their
+meaning or add their own requirements. Plans and tasks MUST follow the spec; code and tests
+MUST be checked against its requirements. Requirements and expected test results MUST NOT
+be adjusted to fit the implementation.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### III. Minimal, Compatible Changes
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+Agents MUST use existing mechanisms first and implement only what is needed for the agreed
+result. New abstractions and shared interface changes MUST have a concrete justification
+within the task. Agents MUST NOT rewrite a subsystem for a small feature or build generic
+systems for hypothetical future needs.
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+Existing commands, configurations, defaults, and formats MUST be preserved; disabling a new
+feature MUST leave previous behavior unchanged. Incompatible changes require explicit
+authorization in the user's task; existing authorization MUST NOT be requested again.
+Without that authorization, the agent MUST choose a compatible implementation. Support for
+other models or modes MUST NOT expand without a separate task.
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+### IV. Training Invariants
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+Auxiliary features MUST preserve training loss, noise, data, precision, gradients, optimizer,
+scheduler, RNG, and resume behavior. Validation MUST NOT update weights, replace training
+loss, or affect subsequent training. A successful run alone does not prove algorithmic
+correctness.
+
+### V. Memory and Performance
+
+Changes MUST NOT duplicate weights or retain extra tensors unnecessarily. Benchmarks and
+memory or performance budgets require a separate task. Local CPU test results MUST NOT be
+presented as real-model performance measurements.
+
+### VI. Configuration and Errors
+
+The effective configuration MUST be validated after defaults, TOML, and CLI inputs are
+applied. Errors detectable without the model MUST be reported before model loading.
+Unknown parameters MUST NOT be ignored. Error messages MUST identify the source, cause,
+and correction.
+
+### VII. Verification and Documentation
+
+Changed behavior MUST be checked with suitable existing tests. New tests MUST target
+substantial logic or regressions, not coverage for its own sake. Unavailable or unperformed
+checks MUST NOT count as passed. Before completion, README MUST be checked against the
+requirements and code and updated within scope where needed. Defects MUST NOT be concealed
+by documentation changes or weakened requirements.
+
+## Execution Stages
+
+### Local Stage
+
+The agent modifies code and performs available local checks. A full tool run is unavailable
+in the local environment. Training, GPU runs, weight downloads, and packaging are outside
+this stage and MUST NOT be launched by the agent during local development. Remote transfer
+and operational verification MUST be performed as a separate stage when included in the
+user's task.
+
+The absence of external runs MUST be recorded once in the stage's results. Local checks
+MUST NOT be presented as full verification of the real model.
+
+### Remote Verification
+
+When the user's task includes remote verification, the agent MUST proceed to that stage
+after the required local checks pass, without requesting another approval. Within the
+authorized task, the agent MUST transfer the implemented version to the supplied server,
+prepare its environment and configurations, run the required operational checks, and
+record evidence. Runs MUST serve the specified verification scenarios.
+
+The agent MUST preserve user data and keep local and remote versions consistent after
+fixes. Unavailable access, models, data, or infrastructure MUST be reported as concrete
+blockers, not successful verification. Remote checks MUST NOT be added to a local-only task.
+
+## Development Workflow
+
+The standard sequence is `specify -> plan -> tasks -> analyze -> implement -> converge`.
+
+The user's task authorizes the agent to complete its specified scope autonomously. The
+agent MUST make routine technical decisions, generate required configurations, run the
+prescribed checks, and advance between stages without human review or repeated approval.
+Unspecified implementation details MUST be resolved from the requirements and code, with
+material assumptions recorded. The agent MUST NOT invent unavailable external facts.
+
+After analyze or converge, the agent MUST record a concrete list of confirmed discrepancies,
+supporting evidence, proposed fixes, and verification criteria. Within the correction limit
+below, it MUST correct those discrepancies autonomously in a separate editing or
+implementation step. Analyze remains read-only; converge remains append-only for tasks.
+Their findings MUST NOT be treated as a request for human approval.
+
+After initial implementation, at most two autonomous `fix -> verify` rounds are allowed
+per feature. A round is a correction pass over a recorded list of confirmed discrepancies
+from post-implementation checks, including converge and remote verification. The coordinator
+MUST record the round count and results; changing commands, agents, or verification stages
+MUST NOT reset the count. A round MUST address confirmed in-scope defects; style comments,
+unconfirmed hypotheses, and additional functionality MUST NOT open a correction cycle.
+
+The agent MUST stop correction passes as soon as required checks pass and no confirmed
+in-scope discrepancies remain. If discrepancies remain after two rounds, it MUST stop
+further corrections and report the remaining defects, evidence, and incomplete status.
+The agent MUST NOT extend the limit autonomously or weaken requirements to claim success.
+Neither correction round requires separate user approval.
+
+When multi-agent work is requested, the coordinator MUST delegate independent work, prevent
+concurrent edits to the same file, integrate results, and arrange independent verification.
+Quality checks and checklists MUST be assessed against evidence by the agents; human review
+is not a required stage. Failed checks MUST be resolved, not marked complete to bypass them.
+
+If progress requires unavailable access, information, or an action outside the authorized
+scope, the agent MUST report the concrete blocker and remaining work, and continue any
+independent authorized work. It MUST NOT declare blocked or unverified work complete.
+
+The local stage is complete only when its requirements are met, prescribed local checks
+have passed, the README review is complete, and no confirmed discrepancies remain within
+the agreed scope. When remote verification is required, the whole task is complete only
+after its required remote checks also pass.
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+This amendment is explicitly authorized by the user. Future amendments require explicit
+user authorization; authorization already provided in the current task MUST NOT be
+requested again. Autonomous implementation does not authorize changing the task's goals or
+weakening this constitution. Feature documents MUST NOT silently override it.
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+Compliance reviews MUST check feature documents and implementation against this
+constitution. Conflicts within the authorized scope MUST be resolved autonomously. If a
+conflict requires an unauthorized amendment or scope change, the agent MUST report that
+specific blocker and continue independent authorized work. Routine decisions, stage
+transitions, and confirmed-defect corrections MUST NOT be escalated for user approval.
+
+Versions follow semantic versioning: MAJOR for incompatible principle or governance removals
+or redefinitions; MINOR for new principles or sections or materially expanded guidance;
+PATCH for clarifications and wording fixes without semantic changes. Dates MUST use
+`YYYY-MM-DD`: Ratified retains the original adoption date; Last Amended records the date
+of the latest change.
+
+**Version**: 2.0.0 | **Ratified**: 2026-09-19 | **Last Amended**: 2026-10-05
