@@ -1,6 +1,6 @@
 # Musubi Tuner
 
-[English](./README.md) | [日本語](./README.ja.md)
+[English](./README.md) | [日本語](./README.ja.md) | [Русский](./README.ru.md)
 
 ## 目次
 
