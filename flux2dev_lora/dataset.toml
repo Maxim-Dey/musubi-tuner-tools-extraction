@@ -1,0 +1,12 @@
+# Paths are relative to the musubi-tuner repository root.
+[general]
+resolution = [1024, 1024]
+caption_extension = ".txt"
+batch_size = 1
+enable_bucket = true
+bucket_no_upscale = true
+
+[[datasets]]
+image_directory = "./data/flux2_dev_style/images"
+cache_directory = "./data/flux2_dev_style/cache"
+num_repeats = 1

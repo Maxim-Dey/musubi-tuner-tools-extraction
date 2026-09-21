@@ -24,22 +24,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 from musubi_tuner.dataset.architectures import *  # noqa: F401,F403
-from musubi_tuner.dataset.architectures import (  # explicit imports for local use
-    ARCHITECTURE_FLUX_2_DEV,
-    ARCHITECTURE_FLUX_2_KLEIN_4B,
-    ARCHITECTURE_FLUX_2_KLEIN_9B,
-    ARCHITECTURE_FLUX_KONTEXT,
-    ARCHITECTURE_FRAMEPACK,
-    ARCHITECTURE_HIDREAM_O1,
-    ARCHITECTURE_HUNYUAN_VIDEO,
-    ARCHITECTURE_HUNYUAN_VIDEO_1_5,
-    ARCHITECTURE_KANDINSKY5,
-    ARCHITECTURE_MINIMAX_H3,
-    ARCHITECTURE_QWEN_IMAGE_EDIT,
-    ARCHITECTURE_WAN,
-    round_down_frame_count,
-)
-from musubi_tuner.dataset.audio_utils import AudioSpec, audio_window_start, slice_audio_window
+
 from musubi_tuner.dataset.media_utils import *  # noqa: F401,F403
 from musubi_tuner.dataset.media_utils import resize_image_to_bucket  # explicit import for local use
 
@@ -64,26 +49,12 @@ class ItemInfo:
         self.latent_cache_path = latent_cache_path
         self.text_encoder_output_cache_path: Optional[str] = None
 
-        # np.ndarray for video, list[np.ndarray] for image with multiple controls
+        # Optional control images, in source order.
         self.control_content: Optional[Union[np.ndarray, list[np.ndarray]]] = None
 
-        # provenance: the index of the originating dataset in its DatasetGroup, the index of the
-        # originating datasource record (image and video datasets) and, for video crops, the
-        # start frame of the crop in target-fps space
+        # Dataset and source-record indices used by cache callbacks.
         self.dataset_index: Optional[int] = None
         self.datasource_index: Optional[int] = None
-        self.frame_pos: Optional[int] = None
-
-        # audio (audio-capable architectures): waveform window [channels, samples] aligned to
-        # the crop, and whether it came from real audio (False: silence placeholder)
-        self.audio_content: Optional[torch.Tensor] = None
-        self.audio_present: Optional[bool] = None
-
-        # FramePack architecture specific
-        self.fp_latent_window_size: Optional[int] = None
-        self.fp_1f_clean_indices: Optional[list[int]] = None  # indices of clean latents for 1f
-        self.fp_1f_target_index: Optional[int] = None  # target index for 1f clean latents
-        self.fp_1f_no_post: Optional[bool] = None  # whether to add zero values as clean latent post
 
     def __str__(self) -> str:
         return (
@@ -106,16 +77,12 @@ from musubi_tuner.dataset.datasources import (  # noqa: F401
     ImageDatasource,
     ImageDirectoryDatasource,
     ImageJsonlDatasource,
-    VideoDatasource,
-    VideoDirectoryDatasource,
-    VideoJsonlDatasource,
 )
 
 
 # The following classes have been moved to datasources.py but are kept here
 # as a comment reference. They are re-imported above for backward compatibility.
 # - ContentDatasource, ImageDatasource, ImageDirectoryDatasource, ImageJsonlDatasource
-# - VideoDatasource, VideoDirectoryDatasource, VideoJsonlDatasource
 
 
 class BaseDataset(torch.utils.data.Dataset):
@@ -297,11 +264,6 @@ class ImageDataset(BaseDataset):
         image_jsonl_file: Optional[str] = None,
         control_directory: Optional[str] = None,
         cache_directory: Optional[str] = None,
-        multiple_target: bool = False,
-        fp_latent_window_size: Optional[int] = 9,
-        fp_1f_clean_indices: Optional[list[int]] = None,
-        fp_1f_target_index: Optional[int] = None,
-        fp_1f_no_post: Optional[bool] = False,
         no_resize_control: Optional[bool] = False,
         control_resolution: Optional[Tuple[int, int]] = None,
         debug_dataset: bool = False,
@@ -321,69 +283,17 @@ class ImageDataset(BaseDataset):
         self.image_directory = image_directory
         self.image_jsonl_file = image_jsonl_file
         self.control_directory = control_directory
-        self.multiple_target = multiple_target
-        self.fp_latent_window_size = fp_latent_window_size
-        self.fp_1f_clean_indices = fp_1f_clean_indices
-        self.fp_1f_target_index = fp_1f_target_index
-        self.fp_1f_no_post = fp_1f_no_post
         self.no_resize_control = no_resize_control
         self.control_resolution = control_resolution
 
-        if self.architecture == ARCHITECTURE_MINIMAX_H3:
-            # one-frame (image) training: t2va targets (K=0), fl2va editing/inbetween targets with
-            # K>=1 time-annotated control images (fp_1f_clean_indices, 24 fps pixel-frame indices),
-            # or ref2va targets whose control images are untimed references (no indices, any
-            # count within the Ref2VA limits). Whether control data is present is only known after
-            # datasource construction (JSONL control_path), so indices<->controls is validated there.
-            if multiple_target:
-                raise ValueError("MiniMax-H3 image datasets do not support multiple targets")
-            if no_resize_control or control_resolution is not None:
-                raise ValueError(
-                    "MiniMax-H3 image datasets resize control images to the bucket resolution;"
-                    " no_resize_control and control_resolution are not supported"
-                )
-            if fp_1f_clean_indices is not None:
-                if len(fp_1f_clean_indices) < 1:
-                    raise ValueError("MiniMax-H3 fp_1f_clean_indices must have at least one entry")
-                if any(index < 0 for index in fp_1f_clean_indices):
-                    raise ValueError(f"MiniMax-H3 fp_1f_clean_indices must be nonnegative, got {fp_1f_clean_indices}")
-                if fp_1f_target_index is None:
-                    # no silent default: a control index coinciding with the target trains against
-                    # the base model's verbatim anchor-copy prior, so the placement must be chosen
-                    raise ValueError("MiniMax-H3 image datasets with fp_1f_clean_indices require an explicit fp_1f_target_index")
-            if fp_1f_target_index is not None and fp_1f_target_index < 0:
-                raise ValueError(f"MiniMax-H3 fp_1f_target_index must be nonnegative, got {fp_1f_target_index}")
-
-        control_count_per_image: Optional[int] = 1
-        if self.architecture == ARCHITECTURE_FRAMEPACK or self.architecture == ARCHITECTURE_WAN:
-            if fp_1f_clean_indices is not None:
-                control_count_per_image = len(fp_1f_clean_indices)
-            else:
-                control_count_per_image = 1
-        elif self.architecture == ARCHITECTURE_MINIMAX_H3:
-            if fp_1f_clean_indices is not None:
-                control_count_per_image = len(fp_1f_clean_indices)  # time-annotated: the indices define the count
-            else:
-                control_count_per_image = None  # untimed references: any count (the Ref2VA limits apply at caching)
-        elif self.architecture == ARCHITECTURE_FLUX_KONTEXT:
-            control_count_per_image = 1
-        elif (
-            self.architecture == ARCHITECTURE_FLUX_2_DEV
-            or self.architecture == ARCHITECTURE_FLUX_2_KLEIN_4B
-            or self.architecture == ARCHITECTURE_FLUX_2_KLEIN_9B
-        ):
-            control_count_per_image = None  # can be multiple control images
-        elif self.architecture == ARCHITECTURE_QWEN_IMAGE_EDIT:
-            control_count_per_image = None  # can be multiple control images
-        elif self.architecture == ARCHITECTURE_HIDREAM_O1:
-            control_count_per_image = None  # can be multiple control/reference images
+        control_count_per_image = None  # Dev supports multiple control images.
 
         if image_directory is not None:
             self.datasource = ImageDirectoryDatasource(
-                image_directory, caption_extension, control_directory, control_count_per_image, multiple_target
+                image_directory, caption_extension, control_directory, control_count_per_image
             )
         elif image_jsonl_file is not None:
-            self.datasource = ImageJsonlDatasource(image_jsonl_file, control_count_per_image, multiple_target)
+            self.datasource = ImageJsonlDatasource(image_jsonl_file, control_count_per_image)
         else:
             raise ValueError("image_directory or image_jsonl_file must be specified")
 
@@ -393,11 +303,6 @@ class ImageDataset(BaseDataset):
         self.batch_manager = None
         self.num_train_items = 0
         self.has_control = self.datasource.has_control
-        if self.architecture == ARCHITECTURE_MINIMAX_H3:
-            # JSONL control_path entries surface only after datasource construction; control images
-            # without indices are untimed references, whose task fit the cache scripts check
-            if self.fp_1f_clean_indices is not None and not self.has_control:
-                raise ValueError("MiniMax-H3 fp_1f_clean_indices requires control images (control_directory or control_path)")
 
     def get_metadata(self):
         metadata = super().get_metadata()
@@ -444,24 +349,8 @@ class ImageDataset(BaseDataset):
                     item_info.datasource_index = datasource_index
                     item_info.latent_cache_path = self.get_latent_cache_path(item_info)
 
-                    # for VLM, which require image in addition to text, like Qwen-Image-Edit
+                    # Both cache paths identify the same image record.
                     item_info.text_encoder_output_cache_path = self.get_text_encoder_output_cache_path(item_info)
-
-                    item_info.fp_latent_window_size = self.fp_latent_window_size
-                    item_info.fp_1f_clean_indices = self.fp_1f_clean_indices
-                    item_info.fp_1f_target_index = self.fp_1f_target_index
-                    item_info.fp_1f_no_post = self.fp_1f_no_post
-
-                    if self.architecture == ARCHITECTURE_FRAMEPACK or self.architecture == ARCHITECTURE_WAN:
-                        # we need to split the bucket with latent window size and optional 1f clean indices, zero post
-                        bucket_reso = list(bucket_reso) + [self.fp_latent_window_size]
-                        if self.fp_1f_clean_indices is not None:
-                            bucket_reso.append(len(self.fp_1f_clean_indices))
-                            bucket_reso.append(self.fp_1f_no_post)
-                        bucket_reso = tuple(bucket_reso)
-                    elif self.architecture == ARCHITECTURE_MINIMAX_H3 and self.fp_1f_clean_indices is not None:
-                        # split by the control count so items with different K never share a batch
-                        bucket_reso = (*bucket_reso, len(self.fp_1f_clean_indices))
 
                     if controls is not None:
                         item_info.control_content = controls
@@ -584,18 +473,6 @@ class ImageDataset(BaseDataset):
 
             bucket_reso = bucket_selector.get_bucket_resolution(image_size)
 
-            if self.architecture == ARCHITECTURE_FRAMEPACK or self.architecture == ARCHITECTURE_WAN:
-                # we need to split the bucket with latent window size and optional 1f clean indices, zero post
-                bucket_reso = list(bucket_reso) + [self.fp_latent_window_size]
-                if self.fp_1f_clean_indices is not None:
-                    bucket_reso.append(len(self.fp_1f_clean_indices))
-                    bucket_reso.append(self.fp_1f_no_post)
-                bucket_reso = tuple(bucket_reso)
-            elif self.architecture == ARCHITECTURE_MINIMAX_H3 and self.fp_1f_clean_indices is not None:
-                # split by the control count so items with different K never share a batch (K is
-                # uniform per dataset, so the dataset-level setting is authoritative; a stale cache
-                # with the wrong condition keys fails in the trainer with a re-cache hint)
-                bucket_reso = (*bucket_reso, len(self.fp_1f_clean_indices))
             # Split the bucket by control latents so that every item in a batch has the same number of
             # control images AND matching per-control shapes. The collator stacks latents_control_{i}
             # across the batch (see BucketBatchManager.__getitem__), so a count or shape mismatch produces
@@ -639,397 +516,10 @@ class ImageDataset(BaseDataset):
         return self.batch_manager[idx]
 
 
-class VideoDataset(BaseDataset):
-    TARGET_FPS_HUNYUAN = 24.0
-    TARGET_FPS_WAN = 16.0
-    TARGET_FPS_FRAMEPACK = 30.0
-    TARGET_FPS_FLUX_KONTEXT = 1.0  # VideoDataset is not used for Flux Kontext, but this is a placeholder
-    TARGET_FPS_HUNYUAN_VIDEO_1_5 = 24.0
-    TARGET_FPS_MINIMAX_H3 = 24.0
-
-    def __init__(
-        self,
-        resolution: Tuple[int, int],
-        caption_extension: Optional[str],
-        batch_size: int,
-        num_repeats: int,
-        enable_bucket: bool,
-        bucket_no_upscale: bool,
-        frame_extraction: Optional[str] = "head",
-        frame_stride: Optional[int] = 1,
-        frame_sample: Optional[int] = 1,
-        target_frames: Optional[list[int]] = None,
-        max_frames: Optional[int] = None,
-        source_fps: Optional[float] = None,
-        video_directory: Optional[str] = None,
-        video_jsonl_file: Optional[str] = None,
-        control_directory: Optional[str] = None,
-        cache_directory: Optional[str] = None,
-        fp_latent_window_size: Optional[int] = 9,
-        debug_dataset: bool = False,
-        architecture: str = "no_default",
-        audio_spec: Optional["AudioSpec"] = None,
-    ):
-        super(VideoDataset, self).__init__(
-            resolution,
-            caption_extension,
-            batch_size,
-            num_repeats,
-            enable_bucket,
-            bucket_no_upscale,
-            cache_directory,
-            debug_dataset,
-            architecture,
-        )
-        self.video_directory = video_directory
-        self.video_jsonl_file = video_jsonl_file
-        self.control_directory = control_directory
-        self.frame_extraction = frame_extraction
-        self.frame_stride = frame_stride
-        self.frame_sample = frame_sample
-        self.max_frames = max_frames
-        self.source_fps = source_fps
-        self.fp_latent_window_size = fp_latent_window_size
-
-        self.vae_frame_stride = 4  # legacy frame-grid fallback; architecture-specific helpers may override the formula
-        self.strict_target_fps = False  # timestamp-based fps normalization (required for AV alignment)
-        if self.architecture == ARCHITECTURE_HUNYUAN_VIDEO:
-            self.target_fps = VideoDataset.TARGET_FPS_HUNYUAN
-        elif self.architecture == ARCHITECTURE_WAN:
-            self.target_fps = VideoDataset.TARGET_FPS_WAN
-        elif self.architecture == ARCHITECTURE_FRAMEPACK:
-            self.target_fps = VideoDataset.TARGET_FPS_FRAMEPACK
-        elif self.architecture == ARCHITECTURE_FLUX_KONTEXT:
-            self.target_fps = VideoDataset.TARGET_FPS_FLUX_KONTEXT
-        elif self.architecture == ARCHITECTURE_KANDINSKY5:
-            self.target_fps = VideoDataset.TARGET_FPS_HUNYUAN
-        elif self.architecture == ARCHITECTURE_HUNYUAN_VIDEO_1_5:
-            self.target_fps = VideoDataset.TARGET_FPS_HUNYUAN_VIDEO_1_5
-        elif self.architecture == ARCHITECTURE_MINIMAX_H3:
-            self.target_fps = VideoDataset.TARGET_FPS_MINIMAX_H3
-            self.strict_target_fps = True
-        else:
-            raise ValueError(f"Unsupported architecture: {self.architecture}")
-
-        self.audio_spec = audio_spec
-        self.audio_fps: Optional[int] = None
-        if audio_spec is not None:
-            audio_fps = int(round(self.target_fps))
-            if abs(self.target_fps - audio_fps) > 1e-9:
-                raise ValueError(f"Audio-capable datasets require an integer target fps, got {self.target_fps}")
-            self.audio_fps = audio_fps
-        if self.strict_target_fps and source_fps is not None:
-            logger.warning(
-                f"source_fps={source_fps} is ignored: architecture {self.architecture} always resamples to "
-                f"{self.target_fps} fps using frame timestamps"
-            )
-
-        if target_frames is not None:
-            target_frames = list(set(target_frames))
-            target_frames.sort()
-
-            rounded_target_frames = [round_down_frame_count(f, self.architecture, self.vae_frame_stride) for f in target_frames]
-            rounded_target_frames = list(set(rounded_target_frames))
-            rounded_target_frames.sort()
-
-            # if value is changed, warn
-            if target_frames != rounded_target_frames:
-                logger.warning(f"target_frames are rounded to {rounded_target_frames}")
-
-            target_frames = tuple(rounded_target_frames)
-
-        self.target_frames = target_frames
-
-        if video_directory is not None:
-            self.datasource = VideoDirectoryDatasource(video_directory, caption_extension, control_directory)
-        elif video_jsonl_file is not None:
-            self.datasource = VideoJsonlDatasource(video_jsonl_file)
-
-        if self.strict_target_fps:
-            self.datasource.set_strict_target_fps(self.target_fps)
-        if self.audio_spec is not None:
-            self.datasource.set_audio_spec(self.audio_spec)
-
-        if self.frame_extraction == "uniform" and self.frame_sample == 1:
-            self.frame_extraction = "head"
-            logger.warning("frame_sample is set to 1 for frame_extraction=uniform. frame_extraction is changed to head.")
-        if self.frame_extraction == "head":
-            # head extraction. we can limit the number of frames to be extracted
-            self.datasource.set_start_and_end_frame(0, max(self.target_frames))
-
-        if self.cache_directory is None:
-            self.cache_directory = self.video_directory
-
-        self.batch_manager = None
-        self.num_train_items = 0
-        self.has_control = self.datasource.has_control
-
-    def get_metadata(self):
-        metadata = super().get_metadata()
-        if self.video_directory is not None:
-            metadata["video_directory"] = os.path.basename(self.video_directory)
-        if self.video_jsonl_file is not None:
-            metadata["video_jsonl_file"] = os.path.basename(self.video_jsonl_file)
-        if self.control_directory is not None:
-            metadata["control_directory"] = os.path.basename(self.control_directory)
-        metadata["frame_extraction"] = self.frame_extraction
-        metadata["frame_stride"] = self.frame_stride
-        metadata["frame_sample"] = self.frame_sample
-        metadata["target_frames"] = self.target_frames
-        metadata["max_frames"] = self.max_frames
-        metadata["source_fps"] = self.source_fps
-        metadata["has_control"] = self.has_control
-        return metadata
-
-    def retrieve_latent_cache_batches(self, num_workers: int):
-        bucket_selector = BucketSelector(self.resolution, self.enable_bucket, self.bucket_no_upscale, self.architecture)
-        self.datasource.set_bucket_selector(bucket_selector)
-        if self.source_fps is not None:
-            self.datasource.set_source_and_target_fps(self.source_fps, self.target_fps)
-        else:
-            self.datasource.set_source_and_target_fps(None, None)  # no conversion
-
-        executor = ThreadPoolExecutor(max_workers=num_workers)
-
-        # key: (width, height, frame_count) and optional latent_window_size, value: [ItemInfo]
-        batches: dict[tuple[Any], list[ItemInfo]] = {}
-        futures = []
-
-        def aggregate_future(consume_all: bool = False):
-            while len(futures) >= num_workers or (consume_all and len(futures) > 0):
-                completed_futures = [future for future in futures if future.done()]
-                if len(completed_futures) == 0:
-                    if len(futures) >= num_workers or consume_all:  # to avoid adding too many futures
-                        time.sleep(0.1)
-                        continue
-                    else:
-                        break  # submit batch if possible
-
-                for future in completed_futures:
-                    original_frame_size, video_key, video, caption, control, waveform, datasource_index = future.result()
-
-                    frame_count = len(video)
-                    video = np.stack(video, axis=0)
-                    height, width = video.shape[1:3]
-                    bucket_reso = (width, height)  # already resized
-
-                    # process control images if available
-                    control_video = None
-                    if control is not None:
-                        # set frame count to the same as video
-                        if len(control) > frame_count:
-                            control = control[:frame_count]
-                        elif len(control) < frame_count:
-                            # if control is shorter than video, repeat the last frame
-                            last_frame = control[-1]
-                            control.extend([last_frame] * (frame_count - len(control)))
-                        control_video = np.stack(control, axis=0)
-
-                    crop_pos_and_frames = []
-                    if self.frame_extraction == "head":
-                        for target_frame in self.target_frames:
-                            if frame_count >= target_frame:
-                                crop_pos_and_frames.append((0, target_frame))
-                    elif self.frame_extraction == "chunk":
-                        # split by target_frames
-                        for target_frame in self.target_frames:
-                            for i in range(0, frame_count, target_frame):
-                                if i + target_frame <= frame_count:
-                                    crop_pos_and_frames.append((i, target_frame))
-                    elif self.frame_extraction == "slide":
-                        # slide window
-                        for target_frame in self.target_frames:
-                            if frame_count >= target_frame:
-                                for i in range(0, frame_count - target_frame + 1, self.frame_stride):
-                                    crop_pos_and_frames.append((i, target_frame))
-                    elif self.frame_extraction == "uniform":
-                        # select N frames uniformly
-                        for target_frame in self.target_frames:
-                            if frame_count >= target_frame:
-                                frame_indices = np.linspace(0, frame_count - target_frame, self.frame_sample, dtype=int)
-                                for i in frame_indices:
-                                    crop_pos_and_frames.append((i, target_frame))
-                    elif self.frame_extraction == "full":
-                        # select all frames
-                        target_frame = min(frame_count, self.max_frames)
-                        target_frame = round_down_frame_count(target_frame, self.architecture, self.vae_frame_stride)
-                        crop_pos_and_frames.append((0, target_frame))
-                    else:
-                        raise ValueError(f"frame_extraction {self.frame_extraction} is not supported")
-
-                    for crop_pos, target_frame in crop_pos_and_frames:
-                        cropped_video = video[crop_pos : crop_pos + target_frame]
-                        body, ext = os.path.splitext(video_key)
-                        item_key = f"{body}_{crop_pos:05d}-{target_frame:03d}{ext}"
-                        batch_key = (*bucket_reso, target_frame)  # bucket_reso with frame_count
-
-                        if self.architecture == ARCHITECTURE_FRAMEPACK:
-                            # add latent window size to bucket resolution
-                            batch_key = (*batch_key, self.fp_latent_window_size)
-
-                        # crop control video if available
-                        cropped_control = None
-                        if control_video is not None:
-                            cropped_control = control_video[crop_pos : crop_pos + target_frame]
-
-                        item_info = ItemInfo(
-                            item_key, caption, original_frame_size, batch_key, frame_count=target_frame, content=cropped_video
-                        )
-                        item_info.latent_cache_path = self.get_latent_cache_path(item_info)
-                        if self.architecture == ARCHITECTURE_MINIMAX_H3:
-                            item_info.text_encoder_output_cache_path = self.get_text_encoder_output_cache_path(item_info)
-                        item_info.control_content = cropped_control  # None is allowed
-                        item_info.fp_latent_window_size = self.fp_latent_window_size
-                        item_info.dataset_index = self.dataset_index
-                        item_info.datasource_index = datasource_index
-                        item_info.frame_pos = int(crop_pos)
-
-                        if self.audio_spec is not None:
-                            sample_count = self.audio_spec.samples_per_crop(target_frame)
-                            if waveform is None:
-                                item_info.audio_content = torch.zeros(self.audio_spec.channels, sample_count, dtype=torch.float32)
-                                item_info.audio_present = False
-                            else:
-                                start_sample = audio_window_start(crop_pos, self.audio_fps, self.audio_spec.sample_rate)
-                                item_info.audio_content = slice_audio_window(
-                                    waveform,
-                                    start_sample=start_sample,
-                                    sample_count=sample_count,
-                                    pad_tolerance=self.audio_spec.codec_pad_tolerance,
-                                    context=video_key,
-                                )
-                                item_info.audio_present = True
-
-                        batch = batches.get(batch_key, [])
-                        batch.append(item_info)
-                        batches[batch_key] = batch
-
-                    futures.remove(future)
-
-        def submit_batch(flush: bool = False):
-            for key in batches:
-                if len(batches[key]) >= self.batch_size or flush:
-                    batch = batches[key][0 : self.batch_size]
-                    if len(batches[key]) > self.batch_size:
-                        batches[key] = batches[key][self.batch_size :]
-                    else:
-                        del batches[key]
-                    return key, batch
-            return None, None
-
-        for operator in self.datasource:
-
-            def fetch_and_resize(op: callable) -> tuple:
-                result = op()
-
-                waveform = None
-                if len(result) == 3:  # for backward compatibility TODO remove this in the future
-                    video_key, video, caption = result
-                    control = None
-                elif len(result) == 4:
-                    video_key, video, caption, control = result
-                else:  # audio-enabled datasource
-                    video_key, video, caption, control, waveform = result
-
-                video: list[np.ndarray]
-                frame_size = (video[0].shape[1], video[0].shape[0])
-
-                # resize if necessary
-                bucket_reso = bucket_selector.get_bucket_resolution(frame_size)
-                video = [resize_image_to_bucket(frame, bucket_reso) for frame in video]
-
-                # resize control if necessary
-                if control is not None:
-                    control = [resize_image_to_bucket(frame, bucket_reso) for frame in control]
-
-                return frame_size, video_key, video, caption, control, waveform, getattr(op, "datasource_index", None)
-
-            future = executor.submit(fetch_and_resize, operator)
-            futures.append(future)
-            aggregate_future()
-            while True:
-                key, batch = submit_batch()
-                if key is None:
-                    break
-                yield key, batch
-
-        aggregate_future(consume_all=True)
-        while True:
-            key, batch = submit_batch(flush=True)
-            if key is None:
-                break
-            yield key, batch
-
-        executor.shutdown()
-
-    def retrieve_text_encoder_output_cache_batches(self, num_workers: int):
-        return self._default_retrieve_text_encoder_output_cache_batches(self.datasource, self.batch_size, num_workers)
-
-    def prepare_for_training(self, num_timestep_buckets: Optional[int] = None):
-        bucket_selector = BucketSelector(self.resolution, self.enable_bucket, self.bucket_no_upscale, self.architecture)
-
-        # glob cache files
-        latent_cache_files = glob.glob(os.path.join(self.cache_directory, f"*_{self.architecture}.safetensors"))
-
-        # assign cache files to item info
-        bucketed_item_info: dict[tuple[int, int, int], list[ItemInfo]] = {}  # (width, height, frame_count) -> [ItemInfo]
-        for cache_file in latent_cache_files:
-            tokens = os.path.basename(cache_file).split("_")
-
-            image_size = tokens[-2]  # 0000x0000
-            image_width, image_height = map(int, image_size.split("x"))
-            image_size = (image_width, image_height)
-
-            frame_pos, frame_count = tokens[-3].split("-")[:2]  # "00000-000", or optional section index "00000-000-00"
-            frame_pos, frame_count = int(frame_pos), int(frame_count)
-
-            item_key = "_".join(tokens[:-3])
-            if self.architecture == ARCHITECTURE_MINIMAX_H3:
-                text_item_key = f"{item_key}_{tokens[-3]}"
-            else:
-                text_item_key = item_key
-            text_encoder_output_cache_file = os.path.join(
-                self.cache_directory, f"{text_item_key}_{self.architecture}_te.safetensors"
-            )
-            if not os.path.exists(text_encoder_output_cache_file):
-                logger.warning(f"Text encoder output cache file not found: {text_encoder_output_cache_file}")
-                continue
-
-            bucket_reso = bucket_selector.get_bucket_resolution(image_size)
-            bucket_reso = (*bucket_reso, frame_count)
-            item_info = ItemInfo(item_key, "", image_size, bucket_reso, frame_count=frame_count, latent_cache_path=cache_file)
-            item_info.text_encoder_output_cache_path = text_encoder_output_cache_file
-
-            bucket = bucketed_item_info.get(bucket_reso, [])
-            for _ in range(self.num_repeats):
-                bucket.append(item_info)
-            bucketed_item_info[bucket_reso] = bucket
-
-        # prepare batch manager
-        self.batch_manager = BucketBatchManager(bucketed_item_info, self.batch_size, num_timestep_buckets=num_timestep_buckets)
-        self.batch_manager.show_bucket_info()
-
-        self.num_train_items = sum([len(bucket) for bucket in bucketed_item_info.values()])
-
-    def shuffle_buckets(self):
-        # set random seed for this epoch
-        random.seed(self.seed + self.current_epoch)
-        self.batch_manager.shuffle()
-
-    def __len__(self):
-        if self.batch_manager is None:
-            return 100  # dummy value
-        return len(self.batch_manager)
-
-    def __getitem__(self, idx):
-        super().__getitem__(idx)
-        return self.batch_manager[idx]
-
-
 class DatasetGroup(torch.utils.data.ConcatDataset):
-    def __init__(self, datasets: Sequence[Union[ImageDataset, VideoDataset]]):
+    def __init__(self, datasets: Sequence[ImageDataset]):
         super().__init__(datasets)
-        self.datasets: list[Union[ImageDataset, VideoDataset]] = datasets
+        self.datasets: list[ImageDataset] = datasets
         self.num_train_items = 0
         for index, dataset in enumerate(self.datasets):
             dataset.dataset_index = index

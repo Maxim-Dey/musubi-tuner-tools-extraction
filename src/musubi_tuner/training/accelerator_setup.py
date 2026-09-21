@@ -5,11 +5,138 @@ import argparse
 import gc
 import os
 import time
+import inspect
+import toml
 
 import torch
 from packaging.version import Version
 from accelerate import Accelerator, InitProcessGroupKwargs, DistributedDataParallelKwargs
 from accelerate.utils import TorchDynamoPlugin, DynamoBackend
+
+
+def validate_tracker_config(args):
+    from musubi_tuner.training.parser_common import config_error, require_dependency, validate_call_kwargs
+
+    backend = args.log_with or ("tensorboard" if args.logging_dir is not None else None)
+    selected = {"tensorboard", "wandb"} if backend == "all" else ({backend} if backend else set())
+    if "tensorboard" in selected and args.logging_dir is None:
+        raise config_error(args, "logging_dir", None, "TensorBoard requires a logging directory", "set logging_dir")
+    for name in selected:
+        require_dependency(args, "log_with", name)
+    config = {}
+    path = args.log_tracker_config
+    if path:
+        try:
+            config = toml.load(path)
+        except (OSError, ValueError) as error:
+            raise ValueError(f"{path}:log_tracker_config={path!r}: {error}; provide a readable valid tracker TOML file") from error
+    for name, kwargs in config.items():
+        source_key = f"{path}:{name}"
+        if name not in ("tensorboard", "wandb") or not isinstance(kwargs, dict):
+            raise ValueError(
+                f"{source_key}={kwargs!r}: unknown tracker or invalid mapping; use [tensorboard] or [wandb] initialization arguments"
+            )
+        # Validate configured backends even if this run does not select them.
+        if name == "tensorboard":
+            require_dependency(args, "log_tracker_config", "tensorboard")
+            from torch.utils.tensorboard import SummaryWriter
+
+            target, positional, supplied = SummaryWriter, ("validation-only",), {}
+        else:
+            wandb = require_dependency(args, "log_tracker_config", "wandb")
+            target, positional, supplied = wandb.init, (), {"project": "validation-only"}
+        parameters = inspect.signature(target).parameters
+        for key, value in kwargs.items():
+            location = f"{source_key}.{key}"
+            if key not in parameters or key in supplied or (name == "tensorboard" and key == "log_dir"):
+                raise ValueError(
+                    f"{location}={value!r}: unsupported or already supplied initialization parameter; use the selected backend's supported arguments"
+                )
+            valid = True
+            if name == "tensorboard":
+                if key in ("flush_secs", "max_queue"):
+                    valid = type(value) is int and value > 0
+                elif key == "purge_step":
+                    valid = type(value) is int and value >= 0
+                elif key in ("comment", "filename_suffix"):
+                    valid = isinstance(value, str)
+            elif key in ("config", "settings"):
+                valid = isinstance(value, dict) or (key == "config" and isinstance(value, str))
+                if key == "settings" and isinstance(value, dict):
+                    # Settings performs local field validation, without starting a run.
+                    try:
+                        wandb.Settings(**value)
+                    except (TypeError, ValueError) as error:
+                        raise ValueError(f"{location}={value!r}: {error}; use supported WandB settings") from error
+            elif name == "wandb" and key in ("tags", "config_exclude_keys", "config_include_keys"):
+                valid = isinstance(value, list) and all(isinstance(v, str) for v in value)
+            elif name == "wandb" and key in ("allow_val_change", "force", "anonymous", "resume", "reinit", "mode"):
+                allowed = {
+                    "allow_val_change": (True, False),
+                    "force": (True, False),
+                    "anonymous": ("never", "allow", "must"),
+                    "resume": (True, False, "allow", "never", "must", "auto"),
+                    "reinit": (True, False, "default", "return_previous", "finish_previous", "create_new"),
+                    "mode": ("online", "offline", "disabled", "shared"),
+                }
+                valid = value in allowed[key]
+            elif name == "wandb" and key not in ("config", "settings"):
+                valid = isinstance(value, str)
+            if not valid:
+                raise ValueError(f"{location}={value!r}: invalid initialization value; use the backend's documented type and range")
+        try:
+            validate_call_kwargs(args, "log_tracker_config", target, kwargs, positional, supplied)
+        except ValueError as error:
+            raise ValueError(f"{source_key}: {error}") from error
+    args._tracker_init_kwargs = config
+
+
+def validate_attention_dependencies(args):
+    from musubi_tuner.training.parser_common import config_error, require_dependency
+
+    if args.sage_attn:
+        raise config_error(
+            args,
+            "sage_attn",
+            True,
+            "SageAttention training is unsupported",
+            "select sdpa, xformers or another supported training backend",
+        )
+    # Match the loader's precedence when users leave multiple historical flags set.
+    for option, package in (
+        ("sdpa", None),
+        ("flash_attn", "flash_attn"),
+        ("xformers", "xformers.ops"),
+        ("flash3", "flash_attn_interface"),
+    ):
+        if getattr(args, option, False):
+            if package:
+                require_dependency(args, option, package)
+            break
+    else:
+        raise config_error(args, "sdpa", False, "no attention backend selected", "select sdpa, flash_attn, xformers or flash3")
+    if args.blocks_to_swap:
+        from musubi_tuner.modules.custom_offloading_utils import BlockSwapConfig
+
+        try:
+            BlockSwapConfig.from_args(args, torch.device("cpu"), supports_backward=True)
+        except ValueError as error:
+            raise config_error(
+                args,
+                "block_swap_h2d_only",
+                args.block_swap_h2d_only,
+                str(error),
+                "enable gradient_checkpointing and use a positive block_swap_ring_size",
+            ) from error
+    if args.compile:
+        from torch._dynamo.backends.registry import lookup_backend
+
+        try:
+            lookup_backend(args.compile_backend)  # registration/import only; never compile or allocate a model
+        except (ImportError, KeyError, RuntimeError, ValueError) as error:
+            raise config_error(
+                args, "compile_backend", args.compile_backend, str(error), "select an installed torch.compile backend"
+            ) from error
 
 
 def clean_memory_on_device(device: torch.device):

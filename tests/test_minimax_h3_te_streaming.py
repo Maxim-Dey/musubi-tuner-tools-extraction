@@ -1,10 +1,4 @@
-"""Tests for MiniMax-H3 text encoder layer streaming.
-
-Covers the generalized multi-tensor streaming of ``LoRAStreamOffloader`` (swap-tensor
-selectors, flat-buffer layout, hook-driven forwarding) on the CPU, plus a CUDA
-end-to-end check of the offloader itself. The numerical gate (streaming on/off produces
-bit-identical hidden states on the real model) runs in the machine smoke tests.
-"""
+"""Common CPU offloader contracts retained from the original streaming tests."""
 
 from pathlib import Path
 import sys
@@ -16,7 +10,6 @@ import torch.nn as nn
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from musubi_tuner.minimax_h3.text_encoder import _te_swap_tensor_selector
 from musubi_tuner.modules.custom_offloading_utils import (
     LoRAStreamOffloader,
     attach_forward_streaming_hooks,
@@ -51,19 +44,6 @@ def _tiny_te_block(seed: int) -> nn.Module:
     block.plain.weight.requires_grad_(False)
     block.norm = nn.LayerNorm(4)
     return block
-
-
-def test_te_selector_streams_weights_and_allowlisted_quant_buffers_only():
-    block = _tiny_te_block(0)
-
-    jobs = _te_swap_tensor_selector(block)
-
-    assert [(id(module), name) for module, name in jobs] == [
-        (id(block.quant), "weight"),
-        (id(block.quant), "scale_weight"),
-        (id(block.quant), "nvfp4_scale"),
-        (id(block.plain), "weight"),
-    ]
 
 
 def test_flat_layout_views_roundtrip_mixed_dtypes():
@@ -143,58 +123,3 @@ def test_selector_returning_unknown_attribute_is_rejected():
 
     with pytest.raises(ValueError, match="neither a parameter nor a registered buffer"):
         offloader._jobs(0)
-
-
-def _snapshot(block: nn.Module) -> dict[str, torch.Tensor]:
-    return {
-        "quant.weight": block.quant.weight.detach().clone(),
-        "quant.scale_weight": block.quant.scale_weight.clone(),
-        "quant.nvfp4_scale": block.quant.nvfp4_scale.clone(),
-        "plain.weight": block.plain.weight.detach().clone(),
-    }
-
-
-def _assert_block_matches(block: nn.Module, expected: dict[str, torch.Tensor], device_type: str):
-    for key, value in expected.items():
-        owner_name, attr = key.split(".")
-        actual = getattr(getattr(block, owner_name), attr)
-        assert actual.device.type == device_type, f"{key} on {actual.device}, expected {device_type}"
-        assert torch.equal(actual.cpu(), value), f"{key} does not match its master"
-
-
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for LoRAStreamOffloader")
-def test_lora_stream_offloader_streams_quantized_blocks_from_cpu_masters():
-    device = torch.device("cuda")
-    blocks = [_tiny_te_block(seed) for seed in range(4)]
-    expected = [_snapshot(block) for block in blocks]
-
-    offloader = LoRAStreamOffloader(
-        "te-test",
-        blocks,
-        num_blocks=4,
-        blocks_to_swap=4,
-        supports_backward=False,
-        device=device,
-        ring_size=2,
-        use_pinned_memory=False,
-        swap_tensor_selector=_te_swap_tensor_selector,
-    )
-    offloader.prepare_block_devices_before_forward(blocks)
-    torch.cuda.synchronize()
-
-    # non-swap parts of every block are resident on the device (CPU-direct first prepare)
-    for block in blocks:
-        assert block.norm.weight.device.type == "cuda"
-        assert block.quant.running_stat.device.type == "cuda"  # not allowlisted -> resident
-    # ring size 2: blocks 0/1 are preloaded, blocks 2/3 sit on their CPU masters
-    _assert_block_matches(blocks[0], expected[0], "cuda")
-    _assert_block_matches(blocks[2], expected[2], "cpu")
-    _assert_block_matches(blocks[3], expected[3], "cpu")
-
-    for _pass in range(2):  # second pass exercises the wrap-around preload
-        for index in range(4):
-            offloader.wait_for_block(index)
-            torch.cuda.synchronize()
-            _assert_block_matches(blocks[index], expected[index], "cuda")
-            offloader.submit_move_blocks_forward(blocks, index)
-    torch.cuda.synchronize()

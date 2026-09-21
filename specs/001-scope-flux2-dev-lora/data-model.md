@@ -1,0 +1,26 @@
+# Data model and invariants
+
+This feature introduces no persistent entity, schema migration or artifact format. These are the existing records whose behavior the cleanup must preserve.
+
+| Entity / existing owner | Fields and relationships | Validation and invariants |
+| --- | --- | --- |
+| Effective training arguments / `training/parser_common.py` | Parser defaults, training TOML and CLI overrides; dataset/prompt/model/output/log/state references, including optional `log_tracker_config` TOML; selected adapter and nested arguments | Validate every consumed source, then effective values. Preserve arbitrary one-level training grouping and flattening order; validate every contained parameter. Validate consumed tracker TOML readability, syntax, tracker sections and supported initialization parameters/values before weights, preserving backend payload meanings and initialization timing without starting trackers. Only Dev and standard FLUX.2 LoRA; active template values unchanged except two internal paths. Diagnostics retain source plus full key path. No new configuration object framework. |
+| Dataset blueprint / `dataset/config_utils.py` | `BaseDatasetParams`, `ImageDatasetParams`, dataset group; general/dataset values, image directory or JSONL, caption extension, resolution/buckets, batch/repeats/cache/control paths | Existing fallback order: dataset -> general -> applicable CLI -> runtime -> dataclass default. Image source required; reject excluded video/audio/FramePack settings. Preserve supported image controls and image JSONL resolution behavior. |
+| Image item / `dataset/image_video_dataset.py`, `datasources.py` | Item key, caption, original/bucket size, target/control content, cache paths, datasource index and existing image metadata | Preserve file ordering, caption lookup, repeat/batch behavior and relative-path fallback. Only temporary fixtures in checks; no changes to user data. |
+| Latent cache / `dataset/cache_io.py` | Existing `*_f2d.safetensors` filename convention; `latents_{H}x{W}_{dtype}`, optional `latents_control_{i}_{H}x{W}_{dtype}`; architecture `flux_2_dev`, dimensions and format metadata | Existing AE preprocessing/packing/dtypes/NaN handling and shared serializer behavior unchanged. No regeneration or migration caused by cleanup. Keep exact current filename derivation from item/bucket identity. |
+| Text cache / same owner | Existing `{item_key}_f2d_te.safetensors`; dtype-qualified `ctx_vec` (e.g. `ctx_vec_bfloat16`); shared metadata | Mistral selected layers `[10,20,30]`, padded length 512 and combined feature dimension 15360 remain unchanged. Per-item cache shape follows current writer; collated training context is `[B,512,15360]`. Preserve cache merge/skip/keep semantics. |
+| Sample prompt / `training/sampling_prompts.py` | TXT options or TOML/JSON records; prompt, dimensions, steps, seed, guidance/shift, supported negative/CFG compatibility fields and optional list of control images | Validate original keys/options and values before Mistral/VAE loading. Preserve current defaults and numeric normalization for valid inputs. `enum` and encoded contexts are internal fields, not accepted arbitrary user extensions. |
+| Prepared sample / `Flux2NetworkTrainer` | Prompt record plus `ctx_vec`, `negative_ctx_vec`; optional control latents; decoded image tensor `(B,C,1,H,W)` | Keep Mistral preparation, Dev denoiser, RNG restoration, model train/eval/swap transitions and PNG/tracker path. A singleton frame axis is an internal image representation, not video support. |
+| LoRA adapter / `networks/lora_flux_2.py`, `networks/lora.py` | Target DoubleStreamBlock/SingleStreamBlock, `lora_unet` naming, rank/alpha/dropout and existing state keys/metadata | Keep template rank=alpha=32, dropout=.05, dtype bridging, group/LR behavior and save precision. Only accepted Dev module spellings select the factory; ordinary base-weight LoRA internals remain. |
+| Training state / trainer + `utils/train_utils.py` + Accelerate | Adapter, optimizer, scheduler, RNG and Accelerate state in existing state directory; current save/load hooks and retention | Keep format/load order. Source currently resets loop counters after state load; baseline comparison and reported limitation required. Do not invent progress metadata or alter resume semantics in cleanup. |
+| Training event / trainer + accelerator setup | Optimizer-update count, loss/gradient/LR logs, sample/checkpoint events, tracker/run naming | Save/sample every 250 updates; sample at first; state retention window 1000 updates for templates. Preserve prefixes, event names, step handling and baseline resume behavior. |
+
+## Existing lifecycle
+
+1. Read/validate configuration and references without changing RNG or model state.
+2. Image/caption records produce AE latent and Mistral text caches through existing callbacks/writers.
+3. Training consumes compatible caches; separately prepares sample prompt embeddings and VAE, then frozen DiT and LoRA.
+4. Accelerator prepares adapter/optimizer/scheduler and registers state hooks; optional resume loads existing state.
+5. Existing loop performs accumulated updates, logging, sampling and saves/retention.
+
+These transitions describe preserved mechanisms. Their full real-model correctness is not established by local source or synthetic checks; see baseline and quickstart.

@@ -9,6 +9,11 @@ import argparse
 import logging
 import os
 import pathlib
+import ast
+import importlib
+import inspect
+import math
+import sys
 
 import toml
 from accelerate.utils import DynamoBackend
@@ -71,8 +76,7 @@ def _add_attention_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--flash3",
         action="store_true",
-        help="use FlashAttention 3 for CrossAttention, requires FlashAttention 3, HunyuanVideo does not support this yet"
-        " / CrossAttentionにFlashAttention 3を使う、FlashAttention 3が必要。HunyuanVideoは未対応。",
+        help="use FlashAttention 3 for CrossAttention; requires FlashAttention 3",
     )
     parser.add_argument(
         "--split_attn",
@@ -388,9 +392,7 @@ def _add_lr_scheduler_args(parser: argparse.ArgumentParser) -> None:
 
 def _add_memory_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--fp8_base", action="store_true", help="use fp8 for base model / base modelにfp8を使う")
-    # The base NetworkTrainer reads args.fp8_scaled unguarded (trainer_base.py). Most trainers add --fp8_scaled in
-    # their own parser, but HunyuanVideo does not support it, so guarantee the attribute exists here as a safety net.
-    # Trainers that add --fp8_scaled override this default; do not remove it (it is not redundant).
+    # Keep the common parser default for helper callers; the Dev parser adds the explicit option.
     parser.set_defaults(fp8_scaled=False)
     # parser.add_argument("--full_fp16", action="store_true", help="fp16 training including gradients / 勾配も含めてfp16で学習する")
     # parser.add_argument("--full_bf16", action="store_true", help="bf16 training including gradients / 勾配も含めてbf16で学習する")
@@ -430,16 +432,13 @@ def _add_memory_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--disable_numpy_memmap",
         action="store_true",
-        help="Disable numpy memory mapping for model loading. Only for Wan, FramePack, Qwen-Image and FLUX.2. Increases RAM usage but speeds up model loading in some cases."
-        " / モデル読み込み時のnumpyメモリマッピングを無効にします。Wan、FramePack、Qwen-Image、FLUX.2で有効です。RAM使用量が増えますが、場合によってはモデルの読み込みが高速化されます。",
+        help="Disable numpy memory mapping for model loading. For FLUX.2 checkpoint loading. Increases RAM usage but speeds up model loading in some cases."
+        " / モデル読み込み時のnumpyメモリマッピングを無効にします。FLUX.2で有効です。RAM使用量が増えますが、場合によってはモデルの読み込みが高速化されます。",
     )
 
 
 def _add_timestep_args(parser: argparse.ArgumentParser) -> None:
     # parser.add_argument("--flow_shift", type=float, default=7.0, help="Shift factor for flow matching schedulers")
-    parser.add_argument(
-        "--guidance_scale", type=float, default=1.0, help="Embeded classifier free guidance scale (HunyuanVideo only)."
-    )
     parser.add_argument(
         "--timestep_sampling",
         choices=[
@@ -785,34 +784,256 @@ def setup_parser_common() -> argparse.ArgumentParser:
 
 
 def read_config_from_file(args: argparse.Namespace, parser: argparse.ArgumentParser):
+    sources = {}
     if not args.config_file:
+        args._config_sources = sources
         return args
 
     config_path = args.config_file + ".toml" if not args.config_file.endswith(".toml") else args.config_file
 
-    if not os.path.exists(config_path):
-        logger.info(f"{config_path} not found.")
-        exit(1)
-
     logger.info(f"Loading settings from {config_path}...")
-    with open(config_path, "r", encoding="utf-8") as f:
-        config_dict = toml.load(f)
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config_dict = toml.load(f)
+    except (OSError, ValueError) as error:
+        raise ValueError(
+            f"{config_path}: config_file={args.config_file!r}: {error}; provide a readable, valid TOML file"
+        ) from error
+
+    destinations = {action.dest for action in parser._actions if action.dest != "help"}
+
+    def add_value(key, value, location):
+        if key not in destinations:
+            raise ValueError(f"{config_path}:{location}={value!r}: unknown or removed parameter; use a retained option from --help")
+        if isinstance(value, dict) or (isinstance(value, list) and any(isinstance(v, (dict, list)) for v in value)):
+            raise ValueError(
+                f"{config_path}:{location}={value!r}: nested value/group is unsupported; use a scalar or flat option list"
+            )
+        ignore_nesting_dict[key] = value
+        sources[key] = f"{config_path}:{location}"
 
     # combine all sections into one
     ignore_nesting_dict = {}
     for section_name, section_dict in config_dict.items():
         # if value is not dict, save key and value as is
         if not isinstance(section_dict, dict):
-            ignore_nesting_dict[section_name] = section_dict
+            add_value(section_name, section_dict, section_name)
             continue
 
         # if value is dict, save all key and value into one dict
         for key, value in section_dict.items():
-            ignore_nesting_dict[key] = value
+            add_value(key, value, f"{section_name}.{key}")
 
     config_args = argparse.Namespace(**ignore_nesting_dict)
     args = parser.parse_args(namespace=config_args)
+    # Explicit CLI values take precedence, including their diagnostic location.
+    for token in sys.argv[1:]:
+        option = token.split("=", 1)[0]
+        action = parser._option_string_actions.get(option)
+        if action is not None:
+            sources[action.dest] = f"CLI:{option}"
+    args._config_sources = sources
     args.config_file = os.path.splitext(args.config_file)[0]
     logger.info(args.config_file)
 
     return args
+
+
+def config_error(args, key, value, cause, correction):
+    source = getattr(args, "_config_sources", {}).get(key, f"CLI/default:{key}")
+    return ValueError(f"{source}={value!r}: {cause}; {correction}")
+
+
+def parse_nested_args(args, key, *, literal=True):
+    result = {}
+    for assignment in getattr(args, key, None) or []:
+        name, separator, value = assignment.partition("=")
+        name = name.strip()
+        if not separator or not name or name in result:
+            raise config_error(args, key, assignment, "malformed or duplicate assignment", "use unique name=value entries")
+        try:
+            result[name] = ast.literal_eval(value) if literal else value
+        except (ValueError, SyntaxError) as error:
+            raise config_error(args, key, assignment, str(error), "use a valid Python literal after =") from error
+    return result
+
+
+def require_dependency(args, key, package):
+    try:
+        return importlib.import_module(package)
+    except (ImportError, OSError) as error:
+        raise config_error(
+            args,
+            key,
+            package,
+            f"selected dependency is unavailable: {error}",
+            f"install a compatible {package} in the execution environment",
+        ) from error
+
+
+def validate_path(value, source, *, directory=False, writable=False):
+    """Check filesystem prerequisites without creating output or reading tensors."""
+    try:
+        if not value:
+            raise ValueError("a path is required")
+        path = pathlib.Path(value)
+        if writable:
+            if path.exists() and not path.is_dir():
+                raise ValueError("destination is not a directory")
+            parent = path
+            while not parent.exists() and parent != parent.parent:
+                parent = parent.parent
+            if not parent.is_dir() or not os.access(parent, os.W_OK):
+                raise ValueError("destination parent is not writable")
+        elif directory:
+            if not path.is_dir() or not os.access(path, os.R_OK):
+                raise ValueError("directory is missing or unreadable")
+        else:
+            if not path.is_file():
+                raise ValueError("file is missing or not a regular file")
+            with path.open("rb"):
+                pass
+    except (OSError, TypeError, ValueError) as error:
+        raise ValueError(
+            f"{source}={value!r}: {error}; provide an accessible {'writable directory' if writable else 'directory' if directory else 'file'}"
+        ) from error
+    return path
+
+
+def validate_call_kwargs(args, key, target, kwargs, positional=(), supplied=None):
+    """Bind the selected callable without constructing an optimizer or tracker."""
+    supplied = supplied or {}
+    try:
+        signature = inspect.signature(target)
+        duplicate = set(kwargs) & set(supplied)
+        if duplicate:
+            raise TypeError(f"arguments already supplied by the trainer: {sorted(duplicate)}")
+        bound = signature.bind(*positional, **supplied, **kwargs)
+        # Inherited optimizer constructors may forward kwargs to a base constructor.
+        # Check that contract rather than treating **kwargs as arbitrary configuration.
+        parameters = dict(signature.parameters)
+        variadic = next((p.name for p in parameters.values() if p.kind == p.VAR_KEYWORD), None)
+        if variadic and bound.arguments.get(variadic):
+            inherited = {}
+            for base in getattr(target, "__mro__", ())[1:]:
+                inherited.update(inspect.signature(base).parameters)
+            unknown = set(bound.arguments[variadic]) - set(inherited)
+            if unknown:
+                raise TypeError(f"no supported forwarded parameter contract for {sorted(unknown)}")
+            parameters.update(inherited)
+        for name, value in kwargs.items():
+            parameter = parameters.get(name)
+            if parameter is None:
+                continue
+            default = parameter.default
+            if type(default) in (bool, int, float, str):
+                valid = type(value) is type(default)
+                # Numeric defaults such as SGD momentum=0 are not integer-only.
+                # Respect an explicit int annotation; otherwise accept either numeric type.
+                if type(default) in (int, float) and parameter.annotation not in (int, "int"):
+                    valid = type(value) in (int, float) and math.isfinite(value)
+                if not valid:
+                    raise TypeError(f"{name} expects {type(default).__name__}, got {value!r}")
+    except (TypeError, ValueError) as error:
+        raise config_error(
+            args, key, kwargs, str(error), "use supported initialization arguments for the selected callable"
+        ) from error
+
+
+def validate_effective_args(args, parser):
+    """Check the actual merged values; argparse does not validate Namespace defaults."""
+    for action in parser._actions:
+        if action.dest == "help":
+            continue
+        value = getattr(args, action.dest, None)
+        if value is None:
+            continue
+        values = value
+        if action.nargs in ("*", "+"):
+            if not isinstance(value, list) or (action.nargs == "+" and not value):
+                raise config_error(args, action.dest, value, "expected a list", "supply a flat list of option values")
+        else:
+            values = [value]
+        for item in values:
+            expected = action.type
+            if isinstance(action, (argparse._StoreTrueAction, argparse._StoreFalseAction)):
+                valid = type(item) is bool
+            elif expected is int:
+                valid = type(item) is int
+            elif expected in (float, _int_or_float):
+                valid = type(item) in (float, int) and math.isfinite(item)
+            elif expected is pathlib.Path:
+                valid = isinstance(item, (str, pathlib.Path))
+            elif expected is str or expected is None:
+                valid = isinstance(item, str)
+            else:
+                valid = True
+            if not valid:
+                raise config_error(args, action.dest, value, "invalid value type", f"use the type documented by --{action.dest}")
+            if action.choices is not None and item not in action.choices:
+                raise config_error(args, action.dest, value, "unsupported value", f"choose one of {list(action.choices)!r}")
+
+    positive = (
+        "network_dim",
+        "max_train_steps",
+        "max_train_epochs",
+        "gradient_accumulation_steps",
+        "save_every_n_steps",
+        "save_every_n_epochs",
+        "sample_every_n_steps",
+        "sample_every_n_epochs",
+        "batch_size",
+        "num_workers",
+    )
+    for key in positive:
+        value = getattr(args, key, None)
+        if value is not None and value <= 0:
+            raise config_error(args, key, value, "must be positive", "supply a value greater than zero")
+    for key in (
+        "learning_rate",
+        "max_grad_norm",
+        "blocks_to_swap",
+        "max_data_loader_n_workers",
+        "lr_warmup_steps",
+        "lr_decay_steps",
+        "save_last_n_steps",
+        "save_last_n_steps_state",
+    ):
+        value = getattr(args, key, None)
+        if value is not None and value < 0:
+            raise config_error(args, key, value, "must be nonnegative", "supply zero or a positive value")
+    dropout = getattr(args, "network_dropout", None)
+    if dropout is not None and not 0 <= dropout <= 1:
+        raise config_error(args, "network_dropout", dropout, "outside [0, 1]", "use a dropout probability in [0, 1]")
+    if getattr(args, "fp8_scaled", False) and not getattr(args, "fp8_base", False):
+        raise config_error(args, "fp8_scaled", True, "requires fp8_base", "enable fp8_base or disable fp8_scaled")
+    if getattr(args, "fp8_text_encoder", False):
+        raise config_error(args, "fp8_text_encoder", True, "Mistral FP8 is unsupported", "set fp8_text_encoder=false")
+    if getattr(args, "persistent_data_loader_workers", False) and args.max_data_loader_n_workers == 0:
+        raise config_error(
+            args,
+            "persistent_data_loader_workers",
+            True,
+            "requires loader workers",
+            "use a positive worker count or disable persistent workers",
+        )
+    if getattr(args, "vae_dtype", None) not in (None, "float32", "fp32", "float16", "fp16", "bfloat16", "bf16"):
+        raise config_error(args, "vae_dtype", args.vae_dtype, "unsupported VAE dtype", "use float32, float16 or bfloat16")
+    # Dev has 8 double / 48 single blocks. Its existing swap allocation first
+    # exceeds the reserved two blocks of each kind at blocks_to_swap=30.
+    if (getattr(args, "blocks_to_swap", None) or 0) > 29:
+        raise config_error(
+            args,
+            "blocks_to_swap",
+            args.blocks_to_swap,
+            "exceeds Dev's 8 double / 48 single block allocation",
+            "use blocks_to_swap in [0, 29]",
+        )
+    min_t = getattr(args, "min_timestep", None)
+    max_t = getattr(args, "max_timestep", None)
+    min_t = 0 if min_t is None else min_t
+    max_t = 1000 if max_t is None else max_t
+    if not 0 <= min_t < 1000:
+        raise config_error(args, "min_timestep", min_t, "outside the 1000-step sampling range", "use min_timestep in [0, 999]")
+    if not 0 < max_t <= 1000:
+        raise config_error(args, "max_timestep", max_t, "outside the 1000-step sampling range", "use max_timestep in [1, 1000]")

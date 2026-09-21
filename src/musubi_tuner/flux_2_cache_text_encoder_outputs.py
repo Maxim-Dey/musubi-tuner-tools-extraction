@@ -33,6 +33,9 @@ def main():
     parser = flux_2_setup_parser(parser)
 
     args = parser.parse_args()
+    from musubi_tuner.training.parser_common import validate_effective_args
+
+    validate_effective_args(args, parser)
     model_version_info = flux2_utils.FLUX2_MODEL_INFO[args.model_version]
 
     device = args.device if args.device is not None else "cuda" if torch.cuda.is_available() else "cpu"
@@ -43,6 +46,8 @@ def main():
     logger.info(f"Load dataset config from {args.dataset_config}")
     user_config = config_utils.load_user_config(args.dataset_config)
     blueprint = blueprint_generator.generate(user_config, args, architecture=model_version_info.architecture)
+    config_utils.validate_dataset_paths(blueprint, args.dataset_config)
+    flux2_utils.validate_model_resources(args, text=True)
     train_dataset_group = config_utils.generate_dataset_group_by_blueprint(blueprint.dataset_group)
 
     datasets = train_dataset_group.datasets
@@ -50,13 +55,13 @@ def main():
     # prepare cache files and paths: all_cache_files_for_dataset = exisiting cache files, all_cache_paths_for_dataset = all cache paths in the dataset
     all_cache_files_for_dataset, all_cache_paths_for_dataset = cache_text_encoder_outputs.prepare_cache_files_and_paths(datasets)
 
-    # Load Mistral 3 or Qwen-3 text encoder
+    # Load Mistral 3 text encoder
     m3_dtype = torch.float8_e4m3fn if args.fp8_text_encoder else torch.bfloat16
     text_embedder = flux2_utils.load_text_embedder(
         model_version_info, args.text_encoder, dtype=m3_dtype, device=device, disable_mmap=True
     )
 
-    # Encode with Mistral 3 or Qwen-3 text encoder
+    # Encode with Mistral 3 text encoder
     logger.info("Encoding with text encoder")
 
     def encode_for_text_encoder(batch: list[ItemInfo]):

@@ -1,6 +1,8 @@
 # LoRA module for FLUX.2
 
 import ast
+import math
+import re
 from typing import Dict, List, Optional
 import torch
 import torch.nn as nn
@@ -14,6 +16,56 @@ import musubi_tuner.networks.lora as lora
 
 
 FLUX_2_TARGET_REPLACE_MODULES = ["DoubleStreamBlock", "SingleStreamBlock"]
+
+
+def validate_network_args(args):
+    from musubi_tuner.training.parser_common import config_error, parse_nested_args
+
+    if args.network_module not in ("networks.lora_flux_2", "musubi_tuner.networks.lora_flux_2"):
+        raise config_error(
+            args,
+            "network_module",
+            args.network_module,
+            "only standard Dev LoRA is supported",
+            "use networks.lora_flux_2 or musubi_tuner.networks.lora_flux_2",
+        )
+    values = parse_nested_args(args, "network_args", literal=False)
+    allowed = {
+        "conv_dim",
+        "conv_alpha",
+        "rank_dropout",
+        "module_dropout",
+        "verbose",
+        "exclude_patterns",
+        "include_patterns",
+        "loraplus_lr_ratio",
+    }
+    for key, raw in values.items():
+        try:
+            if key not in allowed:
+                raise ValueError("unknown or excluded adapter argument")
+            value = ast.literal_eval(raw)
+            if key.endswith("_patterns"):
+                if not isinstance(value, list if key == "exclude_patterns" else (list, tuple)) or not all(
+                    isinstance(pattern, str) for pattern in value
+                ):
+                    raise ValueError("expected a list of regular expressions")
+                for pattern in value:
+                    re.compile(pattern)
+            elif key == "verbose":
+                if type(value) is not bool:
+                    raise ValueError("expected True or False")
+            elif key == "conv_dim":
+                if type(value) is not int or value <= 0:
+                    raise ValueError("expected a positive integer")
+            elif type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                raise ValueError("expected a finite nonnegative number")
+            elif key.endswith("_dropout") and (value > 1 or (key == "rank_dropout" and value == 1)):
+                raise ValueError("dropout must be in [0, 1]; rank_dropout must be below 1")
+        except (ValueError, SyntaxError, re.error) as error:
+            raise config_error(
+                args, "network_args", f"{key}={raw}", str(error), f"use a valid standard LoRA argument from {sorted(allowed)}"
+            ) from error
 
 
 def create_arch_network(

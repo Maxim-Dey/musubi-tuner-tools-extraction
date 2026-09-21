@@ -1,7 +1,10 @@
 import argparse
 import logging
 import os
+import pickle
+import random
 import shutil
+from pathlib import Path
 from typing import Callable
 
 import accelerate
@@ -22,6 +25,114 @@ LAST_STATE_NAME = "{}-state"
 STEP_STATE_NAME = "{}-step{:08d}-state"
 STEP_FILE_NAME = "{}-step{:08d}"
 STEP_DIFFUSERS_DIR_NAME = "{}-step{:08d}"
+TRAINING_PROGRESS_NAME = "training_progress.pt"
+
+
+def load_training_progress(directory):
+    """Optional sidecar; Accelerate's existing model/optimizer/RNG files stay unchanged."""
+    path = Path(directory) / TRAINING_PROGRESS_NAME
+    if not path.exists():
+        return None
+    try:
+        progress = torch.load(path, map_location="cpu", weights_only=True)
+        if not isinstance(progress, dict) or progress["version"] != 1:
+            raise ValueError("unsupported progress version")
+        for key in ("epoch", "next_batch", "global_step"):
+            if type(progress[key]) is not int or progress[key] < 0:
+                raise ValueError(f"invalid {key}={progress[key]!r}")
+        for key in (
+            "finished",
+            "epoch_rng",
+            "loader_seed_rng",
+            "sampler_rng",
+            "dataset_seeds",
+            "dataset_epochs",
+            "loader_config",
+            "loss_list",
+            "loss_total",
+            "timestep_range_pool",
+        ):
+            if key not in progress:
+                raise ValueError(f"missing {key}")
+        if type(progress["finished"]) is not bool:
+            raise ValueError("invalid finished flag")
+        for key in ("epoch_rng", "loader_seed_rng", "sampler_rng"):
+            value = progress[key]
+            if value is not None and (not isinstance(value, torch.Tensor) or value.dtype != torch.uint8 or value.ndim != 1):
+                raise ValueError(f"invalid {key}")
+        if progress["next_batch"] and progress["epoch_rng"] is None:
+            raise ValueError("missing epoch RNG for an unfinished epoch")
+    except (OSError, RuntimeError, ValueError, KeyError, TypeError, EOFError, pickle.UnpicklingError) as error:
+        raise ValueError(f"{path}: resume progress: {error}; use a complete, compatible state directory") from error
+    return progress
+
+
+def restore_dataset_epochs(dataset_group, seeds, epochs):
+    """Rebuild the existing deterministic bucket shuffles, without reading caches."""
+    if len(dataset_group.datasets) != len(seeds) or len(seeds) != len(epochs):
+        raise ValueError("resume: dataset count changed; use the original dataset configuration")
+    rng = random.getstate()
+    try:
+        for dataset, seed, epoch in zip(dataset_group.datasets, seeds, epochs):
+            dataset.seed = seed
+            while dataset.current_epoch < epoch:
+                dataset.current_epoch += 1
+                dataset.shuffle_buckets()
+    finally:
+        random.setstate(rng)
+
+
+def get_dataloader_sampler(dataloader):
+    from accelerate.data_loader import get_sampler
+
+    sampler = get_sampler(dataloader)
+    if sampler is None:
+        sampler = dataloader.batch_sampler.batch_sampler.sampler
+    return sampler
+
+
+def resume_dataloader(dataloader, progress):
+    """Recreate the saved epoch's sampler and skip completed batches without loading them.
+
+    Keep the returned loader for later epochs so persistent workers are reused.
+    Cached image datasets only consume Python RNG when their epoch shuffle changes.
+    """
+    rng = torch.get_rng_state()
+    python_rng = random.getstate()
+    dataset_epochs = [dataset.current_epoch for dataset in dataloader.dataset.datasets]
+    sampler = get_dataloader_sampler(dataloader)
+    if progress["sampler_rng"] is not None:
+        sampler.generator.set_state(progress["sampler_rng"])
+    torch.set_rng_state(progress["epoch_rng"])
+    resumed = accelerate.skip_first_batches(dataloader, progress["next_batch"])
+    resumed.set_epoch(progress["epoch"])
+    # A continuous persistent loader only draws its worker base seed once.
+    # Recreating workers must not steal the sampler's epoch-start RNG draw.
+    if resumed.persistent_workers and progress["epoch"] > 0:
+        resumed.base_dataloader.generator = torch.Generator().set_state(progress["loader_seed_rng"])
+    empty = len(resumed) == 0
+    # Accelerate 1.6's shard iterator cannot handle an empty epoch. Exhaust
+    # only the base loader to recreate sampler/worker state without its prefetch.
+    iterator = iter(resumed.base_dataloader) if empty else iter(resumed)
+    try:
+        first = next(iterator, None)
+    finally:
+        if progress["next_batch"]:
+            torch.set_rng_state(rng)
+        # Preserve a newly encountered dataset's shuffle (the normal loader
+        # prefetches one batch ahead), otherwise restore the checkpoint RNG.
+        if dataset_epochs == [dataset.current_epoch for dataset in dataloader.dataset.datasets]:
+            random.setstate(python_rng)
+        resumed.base_dataloader.generator = dataloader.generator
+    if empty:
+        resumed.set_epoch(progress["epoch"] + 1)
+
+    def batches():
+        if first is not None:
+            yield first
+            yield from iterator
+
+    return resumed, batches()
 
 
 def get_sanitized_config_or_none(args: argparse.Namespace):
@@ -46,6 +157,8 @@ def get_sanitized_config_or_none(args: argparse.Namespace):
     ]
     filtered_args = {}
     for k, v in vars(args).items():
+        if k.startswith("_"):
+            continue  # parser provenance and validated tracker payloads are internal
         # filter out sensitive values and convert to string if necessary
         if k not in sensitive_args + sensitive_path_args:
             # Accelerate values need to have type `bool`,`str`, `float`, `int`, or `None`.

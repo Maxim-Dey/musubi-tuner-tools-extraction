@@ -8,14 +8,10 @@ from einops import rearrange
 from diffusers.utils.torch_utils import randn_tensor
 
 from musubi_tuner.flux_2 import flux2_models, flux2_utils
-from musubi_tuner.hv_train_network import (
-    DiTOutput,
-    NetworkTrainer,
-    load_prompts,
-    clean_memory_on_device,
-    setup_parser_common,
-    read_config_from_file,
-)
+from musubi_tuner.training.trainer_base import DiTOutput, NetworkTrainer
+from musubi_tuner.training.sampling_prompts import load_prompts
+from musubi_tuner.training.accelerator_setup import clean_memory_on_device
+from musubi_tuner.training.parser_common import setup_parser_common, read_config_from_file, validate_effective_args
 
 import logging
 
@@ -42,9 +38,7 @@ class Flux2NetworkTrainer(NetworkTrainer):
     def handle_model_specific_args(self, args):
         self.model_version_info = flux2_utils.FLUX2_MODEL_INFO[args.model_version]
         self.dit_dtype = torch.float16 if args.mixed_precision == "fp16" else torch.bfloat16
-        self._i2v_training = False
-        self._control_training = False  # this means video training, not control image training
-        self.default_guidance_scale = 4.0  # CFG scale for inference for base models
+        self.default_guidance_scale = 4.0
         self.default_discrete_flow_shift = None  # Use FLUX.2 shift as default
 
     def process_sample_prompts(self, args: argparse.Namespace, accelerator: Accelerator, sample_prompts: str):
@@ -53,14 +47,14 @@ class Flux2NetworkTrainer(NetworkTrainer):
         logger.info(f"cache Text Encoder outputs for sample prompt: {sample_prompts}")
         prompts = load_prompts(sample_prompts)
 
-        # Load Text Encoder (Mistral 3 or Qwen-3)
+        # Load Text Encoder (Mistral 3)
         te_dtype = torch.float8_e4m3fn if args.fp8_text_encoder else torch.bfloat16
         text_embedder = flux2_utils.load_text_embedder(
             self.model_version_info, args.text_encoder, dtype=te_dtype, device=device, disable_mmap=True
         )
 
-        # Encode with Text Encoder (Mistral 3 or Qwen-3)
-        logger.info("Encoding with Text Encoder (Mistral 3 or Qwen-3)...")
+        # Encode with Text Encoder (Mistral 3)
+        logger.info("Encoding with Text Encoder (Mistral 3)...")
 
         sample_prompts_te_outputs = {}  # prompt -> encoded tensor
         for prompt_dict in prompts:
@@ -121,8 +115,6 @@ class Flux2NetworkTrainer(NetworkTrainer):
         do_classifier_free_guidance,
         guidance_scale,
         cfg_scale,
-        image_path=None,
-        control_video_path=None,
     ):
         """architecture dependent inference"""
         model: flux2_models.Flux2 = transformer
@@ -167,32 +159,17 @@ class Flux2NetworkTrainer(NetworkTrainer):
 
         # denoise
         timesteps = flux2_utils.get_schedule(sample_steps, x.shape[1], discrete_flow_shift)
-        if self.model_version_info.guidance_distilled:
-            x = flux2_utils.denoise(
-                model,
-                x,
-                x_ids,
-                ctx,
-                ctx_ids,
-                timesteps=timesteps,
-                guidance=guidance_scale,
-                img_cond_seq=ref_tokens,
-                img_cond_seq_ids=ref_ids,
-            )
-        else:
-            x = flux2_utils.denoise_cfg(
-                model,
-                x,
-                x_ids,
-                ctx,
-                ctx_ids,
-                negative_ctx,
-                negative_ctx_ids,
-                timesteps=timesteps,
-                guidance=guidance_scale,
-                img_cond_seq=ref_tokens,
-                img_cond_seq_ids=ref_ids,
-            )
+        x = flux2_utils.denoise(
+            model,
+            x,
+            x_ids,
+            ctx,
+            ctx_ids,
+            timesteps=timesteps,
+            guidance=guidance_scale,
+            img_cond_seq=ref_tokens,
+            img_cond_seq_ids=ref_ids,
+        )
         x = torch.cat(flux2_utils.scatter_ids(x, x_ids)).squeeze(2)
         latent = x.to(vae.dtype)
         del x
@@ -201,8 +178,8 @@ class Flux2NetworkTrainer(NetworkTrainer):
         vae.to(device)
         vae.eval()
 
-        # Decode latents to video
-        logger.info(f"Decoding video from latents: {latent.shape}")
+        # Decode latents to image
+        logger.info(f"Decoding image from latents: {latent.shape}")
         with torch.no_grad():
             pixels = vae.decode(latent)  # decode to pixels
         del latent
@@ -214,7 +191,7 @@ class Flux2NetworkTrainer(NetworkTrainer):
         vae.to("cpu")
         clean_memory_on_device(device)
 
-        pixels = pixels.unsqueeze(2)  # add a dummy dimension for video frames, B C H W -> B C 1 H W
+        pixels = pixels.unsqueeze(2)  # add the singleton image axis, B C H W -> B C 1 H W
         return pixels
 
     def load_vae(self, args: argparse.Namespace, vae_dtype: torch.dtype, vae_path: str):
@@ -356,9 +333,54 @@ def main():
     args.dit_dtype = None  # set from mixed_precision
     if args.vae_dtype is None:
         args.vae_dtype = "float32"  # make float32 as default for VAE
+    validate_effective_args(args, parser)
 
     trainer = Flux2NetworkTrainer()
+    from musubi_tuner.networks.lora_flux_2 import validate_network_args
+    from musubi_tuner.training.accelerator_setup import validate_attention_dependencies, validate_tracker_config
+
+    validate_network_args(args)
+    trainer.validate_optimizer_and_scheduler(args)
+    validate_attention_dependencies(args)
+    validate_tracker_config(args)
+    validate_training_inputs(args)
     trainer.train(args)
+
+
+def validate_training_inputs(args):
+    from musubi_tuner.dataset import config_utils
+    from musubi_tuner.training.parser_common import config_error, validate_path
+
+    config = config_utils.load_user_config(args.dataset_config)
+    blueprint = config_utils.BlueprintGenerator(config_utils.ConfigSanitizer()).generate(
+        config, args, architecture=flux2_utils.FLUX2_MODEL_INFO[args.model_version].architecture
+    )
+    config_utils.validate_dataset_paths(blueprint, args.dataset_config)
+    prompts = load_prompts(args.sample_prompts) if args.sample_prompts else []
+    for index, prompt in enumerate(prompts):
+        controls = prompt.get("control_image_path", [])
+        controls = [controls] if isinstance(controls, str) else controls
+        for control in controls:
+            validate_path(control, f"{args.sample_prompts}:{index}.control_image_path")
+    for key in ("output_dir", "logging_dir"):
+        if key == "output_dir" or getattr(args, key, None) is not None:
+            validate_path(getattr(args, key), getattr(args, "_config_sources", {}).get(key, key), writable=True)
+    if not args.output_name:
+        raise config_error(args, "output_name", args.output_name, "output name is required", "set output_name")
+    if args.resume and not args.resume_from_huggingface:
+        validate_path(args.resume, "resume", directory=True)
+        from musubi_tuner.utils.train_utils import load_training_progress
+
+        load_training_progress(args.resume)
+    for key in ("network_weights", "base_weights"):
+        paths = getattr(args, key, None)
+        for path in (paths if isinstance(paths, list) else [paths]) if paths else []:
+            validate_path(path, key)
+    if args.dim_from_weights and not args.network_weights:
+        raise config_error(
+            args, "dim_from_weights", True, "requires network_weights", "supply initial LoRA weights or disable dim_from_weights"
+        )
+    flux2_utils.validate_model_resources(args, train=True, latent=bool(prompts), text=bool(prompts))
 
 
 if __name__ == "__main__":

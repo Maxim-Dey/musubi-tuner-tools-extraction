@@ -1,6 +1,14 @@
 __pycache__/
+*.pyc
 .venv
 venv/
+dist/
+build/
+*.egg-info/
+*.tmp
+*.swp
+.DS_Store
+Thumbs.db
 logs/
 uv.lock
 main.exp

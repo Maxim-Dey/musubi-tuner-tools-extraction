@@ -1,0 +1,82 @@
+# FLUX.2 Dev — обучение стилевой LoRA.
+# Запуск из корня musubi-tuner. Пути к моделям и датасету измените под себя.
+
+# === 1. Модели и датасет ===
+model_version = "dev"
+dit = "./models/flux2-dev/flux2-dev.safetensors"
+vae = "./models/flux2-dev/ae.safetensors"
+# Источник всех моделей: https://huggingface.co/black-forest-labs/FLUX.2-dev
+# Все 10 оригинальных шардов Mistral 3 должны лежать рядом с первым.
+text_encoder = "./models/flux2-dev/text_encoder/model-00001-of-00010.safetensors"
+dataset_config = "./flux2dev_lora/dataset.toml"
+
+# === 2. Архитектура LoRA ===
+network_module = "networks.lora_flux_2"
+network_dim = 32
+network_alpha = 32
+network_dropout = 0.05
+
+# === 3. Точность весов ===
+# DiT и текстовый энкодер — BF16; VAE сохраняет исходную точность FP32.
+mixed_precision = "bf16"
+vae_dtype = "float32"
+fp8_base = false
+fp8_scaled = false
+# FP8 для Mistral 3 в этой версии не поддерживается.
+fp8_text_encoder = false
+
+# === 4. Attention и экономия памяти ===
+sdpa = true
+gradient_checkpointing = true
+# Необязательный перенос блоков между GPU и RAM; сейчас выключен.
+# blocks_to_swap = 20
+
+# === 5. Выбор уровня шума и взвешивание ошибки ===
+timestep_sampling = "flux2_shift"
+weighting_scheme = "none"
+
+# === 6. Оптимизатор и learning rate ===
+optimizer_type = "adamw8bit"
+learning_rate = 1e-4
+lr_scheduler = "constant_with_warmup"
+lr_warmup_steps = 100
+max_grad_norm = 1.0
+
+# === 7. Длительность обучения и накопление градиентов ===
+max_train_steps = 2000
+# При batch_size = 1 и одной GPU эффективный batch равен 4.
+gradient_accumulation_steps = 4
+seed = 42
+
+# === 8. Загрузка данных ===
+max_data_loader_n_workers = 2
+persistent_data_loader_workers = true
+
+# === 9. Сохранение LoRA и полного состояния обучения ===
+output_dir = "./output/flux2_dev_style"
+# Основа имён LoRA, папок состояния и изображений-примеров.
+output_name = "flux2_dev_style"
+# Интервал в обновлениях оптимизатора.
+save_every_n_steps = 250
+# Полное состояние: LoRA, оптимизатор, планировщик LR и RNG.
+save_state = true
+save_state_on_train_end = true
+# Окна хранения в шагах, не количество файлов. Старые сохранения удаляются.
+# Чтобы хранить всё, закомментируйте оба save_last_n_steps*.
+save_last_n_steps = 1000
+# Отдельное окно для состояний; если не задано, наследует save_last_n_steps.
+save_last_n_steps_state = 1000
+
+# === 10. Генерация примеров ===
+sample_prompts = "./flux2dev_lora/sample_prompts.txt"
+# Интервал в обновлениях оптимизатора.
+sample_every_n_steps = 250
+sample_at_first = true
+
+# === 11. Логи TensorBoard ===
+log_with = "tensorboard"
+logging_dir = "./logs/flux2_dev_style"
+# Префикс папки запуска перед автоматически добавляемой датой.
+log_prefix = "flux2_dev_style_"
+# Имя подпапки трекера TensorBoard; названия метрик не меняет.
+log_tracker_name = "flux2_style"

@@ -83,6 +83,9 @@ def main():
     flux2_utils.add_model_version_args(parser)
 
     args = parser.parse_args()
+    from musubi_tuner.training.parser_common import validate_effective_args
+
+    validate_effective_args(args, parser)
     model_version_info = flux2_utils.FLUX2_MODEL_INFO[args.model_version]
 
     if args.disable_cudnn_backend:
@@ -97,14 +100,14 @@ def main():
     logger.info(f"Load dataset config from {args.dataset_config}")
     user_config = config_utils.load_user_config(args.dataset_config)
     blueprint = blueprint_generator.generate(user_config, args, architecture=model_version_info.architecture)
+    config_utils.validate_dataset_paths(blueprint, args.dataset_config)
+    flux2_utils.validate_model_resources(args, latent=args.debug_mode is None)
     train_dataset_group = config_utils.generate_dataset_group_by_blueprint(blueprint.dataset_group)
 
     datasets = train_dataset_group.datasets
 
     if args.debug_mode is not None:
-        cache_latents.show_datasets(
-            datasets, args.debug_mode, args.console_width, args.console_back, args.console_num_images, fps=16
-        )
+        cache_latents.show_datasets(datasets, args.debug_mode, args.console_width, args.console_back, args.console_num_images)
         return
 
     assert args.vae is not None, "ae checkpoint is required"

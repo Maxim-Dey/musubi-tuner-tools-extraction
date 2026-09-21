@@ -1,30 +1,20 @@
-"""NetworkTrainer base class shared by all architecture-specific training scripts.
+"""Existing LoRA training loop and common helpers for FLUX.2 Dev."""
 
-Architecture-specific methods (load_vae, load_transformer, call_dit,
-process_sample_prompts, do_inference, ...) are declared here as abstract hooks
-and implemented by subclasses in each *_train_network.py (see e.g.
-HunyuanVideoNetworkTrainer in hv_train_network.py, WanNetworkTrainer in
-wan_train_network.py, ...).
-"""
-
-import ast
 import asyncio
 import importlib
 import argparse
 import math
 import os
-import sys
 import random
 import time
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from multiprocessing import Value
 from typing import Any, List, Optional
 import accelerate
 import numpy as np
 
 import huggingface_hub
-import toml
 
 import torch
 from tqdm import tqdm
@@ -39,13 +29,12 @@ from diffusers.optimization import (
 from transformers.optimization import SchedulerType, TYPE_TO_SCHEDULER_FUNCTION
 
 from musubi_tuner.dataset import config_utils
-from musubi_tuner.dataset.architectures import round_down_frame_count
 from musubi_tuner.modules.custom_offloading_utils import BlockSwapConfig
 from musubi_tuner.modules.lr_schedulers import RexLR
 from musubi_tuner.modules.scheduling_flow_match_discrete import FlowMatchDiscreteScheduler
 import musubi_tuner.networks.lora as lora_module
 from musubi_tuner.dataset.config_utils import BlueprintGenerator, ConfigSanitizer
-from musubi_tuner.hv_generate_video import save_images_grid, save_videos_grid
+from musubi_tuner.utils.image_utils import save_images_grid
 
 import logging
 
@@ -59,6 +48,7 @@ from musubi_tuner.training.accelerator_setup import (
     prepare_accelerator,
 )
 from musubi_tuner.training.sampling_prompts import should_sample_images
+from musubi_tuner.training.parser_common import parse_nested_args
 from musubi_tuner.training.timesteps import (
     compute_density_for_timestep_sampling,
     compute_ideogram4_shift_timestep,
@@ -120,31 +110,19 @@ def wandb_tracker_and_module(accelerator):
 
 @dataclass
 class DiTOutput:
-    """Return type for ``NetworkTrainer.call_dit``.
-
-    Internal extension point — no API stability guarantees. Vanilla flow only
-    needs ``pred`` and ``target``; extension subclasses can stash arbitrary
-    additional outputs (e.g. hidden features for representation-alignment
-    losses) in the ``extra`` dict without breaking the base signature.
-    """
+    """Flow prediction and target returned by the Dev DiT call."""
 
     pred: torch.Tensor
     target: torch.Tensor
-    extra: dict = field(default_factory=dict)
 
 
 class NetworkTrainer:
-    # audio-capable architectures override this class attribute with their AudioSpec so that
-    # dataset construction enables audio (class attribute because _build_dataset runs before
-    # handle_model_specific_args)
-    audio_spec = None
-
     def __init__(self):
         self.blocks_to_swap = None
         self.timestep_range_pool = []
         self.num_timestep_buckets: Optional[int] = None  # for get_bucketed_timestep()
-        self.vae_frame_stride = 4  # legacy frame-grid fallback; some architectures set 1 or use a custom formula
         self.default_discrete_flow_shift = 14.5  # default value for discrete flow shift for all models TODO may be None is better
+        self._training_progress = None
 
     # TODO 他のスクリプトと共通化する
     def generate_step_logs(
@@ -219,18 +197,171 @@ class NetworkTrainer:
             "grad/max": max_grad.item(),
         }
 
+    def validate_optimizer_and_scheduler(self, args):
+        from musubi_tuner.training.parser_common import config_error, parse_nested_args, require_dependency, validate_call_kwargs
+
+        def resolve(name, default_module, key):
+            module_name, separator, attribute = name.rpartition(".")
+            module = require_dependency(args, key, module_name) if separator else default_module
+            try:
+                return getattr(module, attribute if separator else name)
+            except AttributeError as error:
+                raise config_error(
+                    args, key, name, "unknown selected callable", "select an installed optimizer/scheduler class"
+                ) from error
+
+        optimizer_kwargs = parse_nested_args(args, "optimizer_args")
+        optimizer_name = args.optimizer_type.lower()
+        if optimizer_name == "adamw8bit":
+            optimizer_class = require_dependency(args, "optimizer_type", "bitsandbytes").optim.AdamW8bit
+        elif optimizer_name == "adafactor":
+            optimizer_class = transformers.optimization.Adafactor
+        elif optimizer_name == "adamw":
+            optimizer_class = torch.optim.AdamW
+        else:
+            optimizer_class = resolve(args.optimizer_type, torch.optim, "optimizer_type")
+        validate_call_kwargs(args, "optimizer_args", optimizer_class, optimizer_kwargs, (None,), {"lr": args.learning_rate})
+        if optimizer_class is torch.optim.SGD and optimizer_kwargs.get("nesterov", False):
+            if optimizer_kwargs.get("momentum", 0) <= 0 or optimizer_kwargs.get("dampening", 0) != 0:
+                raise config_error(
+                    args,
+                    "optimizer_args",
+                    optimizer_kwargs,
+                    "SGD Nesterov requires positive momentum and zero dampening",
+                    "set momentum>0 and dampening=0, or disable nesterov",
+                )
+        for key, value in optimizer_kwargs.items():
+            if key == "betas" and (
+                not isinstance(value, (tuple, list))
+                or len(value) != 2
+                or any(type(v) not in (int, float) or not 0 <= v < 1 for v in value)
+            ):
+                raise config_error(
+                    args, "optimizer_args", value, "betas must contain two probabilities in [0, 1)", "supply a valid beta pair"
+                )
+            if key in ("eps", "weight_decay", "momentum", "dampening") and (type(value) not in (int, float) or value < 0):
+                # Adafactor has a pair of epsilons rather than Adam's scalar.
+                if not (
+                    optimizer_name == "adafactor"
+                    and key == "eps"
+                    and isinstance(value, (tuple, list))
+                    and len(value) == 2
+                    and all(type(v) in (int, float) and v >= 0 for v in value)
+                ):
+                    raise config_error(
+                        args, "optimizer_args", value, f"invalid {key}", "use the selected optimizer's supported numeric value"
+                    )
+
+        kwargs = parse_nested_args(args, "lr_scheduler_args")
+        name = args.lr_scheduler
+        if self.is_schedulefree_optimizer(None, args):
+            if kwargs:
+                raise config_error(
+                    args,
+                    "lr_scheduler_args",
+                    kwargs,
+                    "schedule-free optimizer does not consume scheduler arguments",
+                    "remove unused scheduler arguments",
+                )
+            return
+        if args.lr_scheduler_type:
+            target = resolve(args.lr_scheduler_type, torch.optim.lr_scheduler, "lr_scheduler_type")
+            supplied = {}
+        elif optimizer_name == "adafactor" and (
+            optimizer_kwargs.get("relative_step", True) or optimizer_kwargs.get("warmup_init", False)
+        ):
+            target, supplied = transformers.optimization.AdafactorSchedule, {"initial_lr": args.learning_rate}
+            if kwargs:
+                raise config_error(
+                    args,
+                    "lr_scheduler_args",
+                    kwargs,
+                    "relative-step Adafactor does not consume scheduler arguments",
+                    "remove unused scheduler arguments",
+                )
+        elif name.startswith("adafactor"):
+            if optimizer_name != "adafactor" or ":" not in name:
+                raise config_error(
+                    args,
+                    "lr_scheduler",
+                    name,
+                    "requires Adafactor and an initial learning rate",
+                    "use adafactor:<initial_lr> with Adafactor",
+                )
+            try:
+                initial_lr = float(name.split(":", 1)[1])
+            except ValueError as error:
+                raise config_error(args, "lr_scheduler", name, str(error), "provide a numeric initial learning rate") from error
+            target, supplied = transformers.optimization.AdafactorSchedule, {"initial_lr": initial_lr}
+            if kwargs:
+                raise config_error(
+                    args,
+                    "lr_scheduler_args",
+                    kwargs,
+                    "AdafactorSchedule arguments are not forwarded",
+                    "remove unused scheduler arguments",
+                )
+        elif name.lower() == "rex":
+            target, supplied = (
+                RexLR,
+                dict(max_lr=args.learning_rate, min_lr=0.0, num_steps=args.max_train_steps, num_warmup_steps=0),
+            )
+        elif name == DiffusersSchedulerType.PIECEWISE_CONSTANT.value:
+            target, supplied = DIFFUSERS_TYPE_TO_SCHEDULER_FUNCTION[DiffusersSchedulerType(name)], {}
+        else:
+            try:
+                selected = SchedulerType(name)
+                target = TYPE_TO_SCHEDULER_FUNCTION[selected]
+            except (ValueError, KeyError) as error:
+                raise config_error(
+                    args, "lr_scheduler", name, "unknown scheduler", "use a supported scheduler name or lr_scheduler_type"
+                ) from error
+            supplied = {}
+            if selected != SchedulerType.CONSTANT:
+                supplied["num_warmup_steps"] = 0
+            if selected == SchedulerType.INVERSE_SQRT:
+                supplied["timescale"] = args.lr_scheduler_timescale
+            elif selected not in (SchedulerType.CONSTANT, SchedulerType.CONSTANT_WITH_WARMUP):
+                if selected == SchedulerType.WARMUP_STABLE_DECAY:
+                    supplied.update(
+                        num_stable_steps=1, num_decay_steps=0, num_cycles=args.lr_scheduler_num_cycles / 2, min_lr_ratio=0.0
+                    )
+                else:
+                    supplied["num_training_steps"] = args.max_train_steps
+                    if selected == SchedulerType.COSINE_WITH_RESTARTS:
+                        supplied["num_cycles"] = args.lr_scheduler_num_cycles
+                    elif selected == SchedulerType.POLYNOMIAL:
+                        supplied["power"] = args.lr_scheduler_power
+                    elif selected == SchedulerType.COSINE_WITH_MIN_LR:
+                        supplied.update(num_cycles=args.lr_scheduler_num_cycles / 2, min_lr_rate=args.lr_scheduler_min_lr_ratio)
+                    elif selected not in (SchedulerType.LINEAR, SchedulerType.COSINE):
+                        supplied["num_decay_steps"] = 0
+        validate_call_kwargs(args, "lr_scheduler_args", target, kwargs, (None,), supplied)
+        warmup_steps = args.lr_warmup_steps
+        if isinstance(warmup_steps, float):
+            # Ratios round down in the consumer. An epoch-derived target is
+            # not yet known here; retain its existing later validation.
+            warmup_steps = int(warmup_steps * args.max_train_steps) if args.max_train_epochs is None else 0
+        if (
+            not args.lr_scheduler_type
+            and (name == "constant" or name.startswith("adafactor") or target is transformers.optimization.AdafactorSchedule)
+            and warmup_steps
+        ):
+            raise config_error(
+                args,
+                "lr_warmup_steps",
+                args.lr_warmup_steps,
+                f"{name} does not consume warmup steps",
+                "set lr_warmup_steps=0 or select a warmup scheduler",
+            )
+
     def get_optimizer(self, args, trainable_params: list[torch.nn.Parameter]) -> tuple[str, str, torch.optim.Optimizer]:
         # adamw, adamw8bit, adafactor
 
         optimizer_type = args.optimizer_type.lower()
 
         # split optimizer_type and optimizer_args
-        optimizer_kwargs = {}
-        if args.optimizer_args is not None and len(args.optimizer_args) > 0:
-            for arg in args.optimizer_args:
-                key, value = arg.split("=")
-                value = ast.literal_eval(value)
-                optimizer_kwargs[key] = value
+        optimizer_kwargs = parse_nested_args(args, "optimizer_args")
 
         lr = args.learning_rate
         optimizer = None
@@ -357,12 +488,7 @@ class NetworkTrainer:
         timescale = args.lr_scheduler_timescale
         min_lr_ratio = args.lr_scheduler_min_lr_ratio
 
-        lr_scheduler_kwargs = {}  # get custom lr_scheduler kwargs
-        if args.lr_scheduler_args is not None and len(args.lr_scheduler_args) > 0:
-            for arg in args.lr_scheduler_args:
-                key, value = arg.split("=")
-                value = ast.literal_eval(value)
-                lr_scheduler_kwargs[key] = value
+        lr_scheduler_kwargs = parse_nested_args(args, "lr_scheduler_args")
 
         def wrap_check_needless_num_warmup_steps(return_vals):
             if num_warmup_steps is not None and num_warmup_steps != 0:
@@ -969,24 +1095,6 @@ class NetworkTrainer:
 
         frame_count = self.round_sample_frame_count(frame_count)
 
-        if self.i2v_training:
-            image_path = sample_parameter.get("image_path", None)
-            if image_path is None:
-                logger.error("No image_path for i2v model / i2vモデルのサンプル画像生成にはimage_pathが必要です")
-                return
-        else:
-            image_path = None
-
-        if self.control_training:
-            control_video_path = sample_parameter.get("control_video_path", None)
-            if control_video_path is None:
-                logger.error(
-                    "No control_video_path for control model / controlモデルのサンプル画像生成にはcontrol_video_pathが必要です"
-                )
-                return
-        else:
-            control_video_path = None
-
         device = accelerator.device
         if seed is not None:
             torch.manual_seed(seed)
@@ -1014,11 +1122,6 @@ class NetworkTrainer:
             logger.info(f"negative prompt: {negative_prompt}")
             logger.info(f"cfg scale: {cfg_scale}")
 
-        if self.i2v_training:
-            logger.info(f"image path: {image_path}")
-        if self.control_training:
-            logger.info(f"control video path: {control_video_path}")
-
         # inference: architecture dependent
         # Check if transformer has self-referencing _orig_mod (compiled model hack)
         # If so, skip eval/train to avoid infinite recursion
@@ -1027,7 +1130,7 @@ class NetworkTrainer:
         if not has_self_ref_orig_mod:
             transformer.eval()
 
-        video = self.do_inference(
+        image = self.do_inference(
             accelerator,
             args,
             sample_parameter,
@@ -1043,16 +1146,14 @@ class NetworkTrainer:
             do_classifier_free_guidance,
             guidance_scale,
             cfg_scale,
-            image_path=image_path,
-            control_video_path=control_video_path,
         )
 
         if not has_self_ref_orig_mod:
             transformer.train(was_train)
 
-        # Save video
-        if video is None:
-            logger.error("No video generated / 生成された動画がありません")
+        # Save image
+        if image is None:
+            logger.error("No sample image generated")
             return
 
         ts_str = time.strftime("%Y%m%d%H%M%S", time.localtime())
@@ -1063,7 +1164,7 @@ class NetworkTrainer:
             f"{'' if args.output_name is None else args.output_name + '_'}{num_suffix}_{prompt_idx:02d}_{ts_str}{seed_suffix}"
         )
 
-        self.save_sample(accelerator, args, sample_parameter, video, save_dir, save_path, steps)
+        self.save_sample(accelerator, args, sample_parameter, image, save_dir, save_path, steps)
 
         # Move models back to initial state
         vae.to("cpu")
@@ -1071,29 +1172,22 @@ class NetworkTrainer:
 
     def round_sample_frame_count(self, frame_count: int) -> int:
         """Snaps a sample prompt's frame count (``--f``) onto the architecture's frame grid."""
-        return round_down_frame_count(frame_count, self.architecture, self.vae_frame_stride)
+        if frame_count != 1:
+            raise ValueError(f"frame_count={frame_count!r}: image samples require 1")
+        return 1
 
     def save_sample(self, accelerator, args, sample_parameter, sample, save_dir: str, save_path: str, steps: int) -> None:
         """Writes the value ``do_inference`` returned under ``save_dir/save_path`` (a stem without
         extension) and logs it to wandb when a tracker is active.
 
-        Default: ``sample`` is a ``(N, C, F, H, W)`` video tensor in [0, 1], saved as an image grid
-        for single-frame outputs and as an mp4 otherwise. Architectures whose samples are not a
-        plain video tensor (e.g. joint audio/video) override this.
+        ``sample`` is an image tensor shaped (B, C, 1, H, W) in [0, 1].
         """
         prompt_idx = sample_parameter.get("enum", 0)
         wandb_tracker, wandb = wandb_tracker_and_module(accelerator)
-        if sample.shape[2] == 1:
-            # In Qwen-Image-Layered, video is (N, C, 1, H, W) where N=Layers, otherwise (1, C, 1, H, W)
-            image_paths = save_images_grid(sample, save_dir, save_path, n_rows=sample.shape[0], create_subdir=False)
-            if wandb_tracker is not None:
-                for image_path in image_paths:
-                    wandb_tracker.log({f"sample_{prompt_idx}": wandb.Image(image_path)}, step=steps)
-        else:
-            video_path = os.path.join(save_dir, save_path) + ".mp4"
-            save_videos_grid(sample, video_path)
-            if wandb_tracker is not None:
-                wandb_tracker.log({f"sample_{prompt_idx}": wandb.Video(video_path)}, step=steps)
+        image_paths = save_images_grid(sample, save_dir, save_path, n_rows=sample.shape[0], create_subdir=False)
+        if wandb_tracker is not None:
+            for image_path in image_paths:
+                wandb_tracker.log({f"sample_{prompt_idx}": wandb.Image(image_path)}, step=steps)
 
     # region model specific (abstract hooks — implemented by architecture-specific subclasses)
 
@@ -1109,14 +1203,6 @@ class NetworkTrainer:
         # Subclasses must set: self._i2v_training, self._control_training, self.default_guidance_scale.
         # They may also set arch-specific state like self.default_discrete_flow_shift, self.vae_frame_stride.
         raise NotImplementedError("subclass must implement `handle_model_specific_args`")
-
-    @property
-    def i2v_training(self) -> bool:
-        return self._i2v_training
-
-    @property
-    def control_training(self) -> bool:
-        return self._control_training
 
     def convert_weight_keys(self, weights_sd: dict[str, torch.Tensor], network_module: lora_module):
         # Default: assume the saved LoRA is already in this project's native format.
@@ -1173,8 +1259,6 @@ class NetworkTrainer:
         do_classifier_free_guidance,
         guidance_scale,
         cfg_scale,
-        image_path=None,
-        control_video_path=None,
     ):
         """Architecture-dependent sample inference used during training."""
         raise NotImplementedError("subclass must implement `do_inference`")
@@ -1380,12 +1464,8 @@ class NetworkTrainer:
     def prepare_sampling(self, args, accelerator, vae_dtype):
         """Prepares training-time sampling; returns ``(sample_parameters, sample_resources)``.
 
-        ``sample_resources`` is an architecture-defined payload that the base trainer
-        threads through unchanged to ``sample_image_inference`` and the sample-image
-        hooks. The default implementation covers single-VAE architectures: it parses
-        prompts via ``process_sample_prompts`` and returns the sampling VAE as the
-        resources. Architectures whose sampling needs more (e.g. separate video and
-        audio VAEs) override this wholesale and return their own payload.
+        ``sample_resources`` is the image VAE passed to sampling helpers.
+        Prompts are encoded through ``process_sample_prompts``.
         Both values are None when ``--sample_prompts`` is not set.
         """
         sample_parameters = None
@@ -1467,8 +1547,7 @@ class NetworkTrainer:
         accelerator, weight_dtype, dit_dtype, dit_weight_dtype, vae_dtype = self._prepare_accelerator_and_dtypes(args)
         sample_parameters, sample_resources = self.prepare_sampling(args, accelerator, vae_dtype)
         transformer = self._load_dit_and_swap(args, accelerator, dit_weight_dtype)
-        # the network factories take a LyCORIS-compatible vae argument; the sampling
-        # resources fill it only when they are a plain module (single-VAE architectures)
+        # Sampling resources contain the VAE when samples are configured.
         network_vae = sample_resources if isinstance(sample_resources, torch.nn.Module) else None
         network = self._build_network(args, accelerator, transformer, network_vae, weight_dtype)
         if network is None:
@@ -1561,8 +1640,8 @@ class NetworkTrainer:
 
         if args.disable_numpy_memmap:
             logger.info(
-                "Disabling numpy memory mapping for model loading (for Wan, FramePack and Qwen-Image). This may lead to higher memory usage but can speed up loading in some cases."
-                " / モデル読み込み時のnumpyメモリマッピングを無効にします（Wan、FramePack、Qwen-Imageでのみ有効）。これによりメモリ使用量が増える可能性がありますが、場合によっては読み込みが高速化されることがあります"
+                "Disabling numpy memory mapping for model loading (for FLUX.2). This may lead to higher memory usage but can speed up loading in some cases."
+                " / モデル読み込み時のnumpyメモリマッピングを無効にします（FLUX.2で有効）。これによりメモリ使用量が増える可能性がありますが、場合によっては読み込みが高速化されることがあります"
             )
 
         # check model specific arguments
@@ -1602,7 +1681,6 @@ class NetworkTrainer:
             training=True,
             num_timestep_buckets=self.num_timestep_buckets,
             shared_epoch=current_epoch,
-            audio_spec=self.audio_spec,
         )
 
         if train_dataset_group.num_train_items == 0:
@@ -1630,7 +1708,6 @@ class NetworkTrainer:
         elif args.mixed_precision == "bf16":
             weight_dtype = torch.bfloat16
 
-        # HunyuanVideo: bfloat16 or float16, Wan2.1: bfloat16
         dit_dtype = torch.bfloat16 if args.dit_dtype is None else model_utils.str_to_dtype(args.dit_dtype)
         dit_weight_dtype = (None if args.fp8_scaled else torch.float8_e4m3fn) if args.fp8_base else dit_dtype
         logger.info(f"DiT precision: {dit_dtype}, weight precision: {dit_weight_dtype}")
@@ -1677,51 +1754,32 @@ class NetworkTrainer:
         return transformer
 
     def _build_network(self, args, accelerator, transformer, vae, weight_dtype):
-        # load network module for differential training
-        # Allow short paths like `--network_module networks.lora` by putting the musubi_tuner
-        # package dir on sys.path. __file__ is under musubi_tuner/training/, so step up one level.
-        sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+        from musubi_tuner.networks import lora_flux_2 as network_module
+
         accelerator.print("import network module:", args.network_module)
-        network_module: lora_module = importlib.import_module(args.network_module)  # actual module may be different
 
         if args.base_weights is not None:
             self.merge_base_weights(args, accelerator, transformer, network_module, weight_dtype)
 
         # prepare network
-        net_kwargs = {}
-        if args.network_args is not None:
-            for net_arg in args.network_args:
-                key, value = net_arg.split("=")
-                net_kwargs[key] = value
+        net_kwargs = parse_nested_args(args, "network_args", literal=False)
 
         if args.dim_from_weights:
-            logger.info(f"Loading network from weights: {args.dim_from_weights}")
-            weights_sd = load_file(args.dim_from_weights)
-            network, _ = network_module.create_arch_network_from_weights(1, weights_sd, unet=transformer)
+            logger.info(f"Loading network from weights: {args.network_weights}")
+            weights_sd = load_file(args.network_weights)
+            network = network_module.create_arch_network_from_weights(1, weights_sd, unet=transformer)
+            del weights_sd
         else:
-            # We use the name create_arch_network for compatibility with LyCORIS
-            if hasattr(network_module, "create_arch_network"):
-                network = network_module.create_arch_network(
-                    1.0,
-                    args.network_dim,
-                    args.network_alpha,
-                    vae,
-                    None,
-                    transformer,
-                    neuron_dropout=args.network_dropout,
-                    **net_kwargs,
-                )
-            else:
-                # LyCORIS compatibility
-                network = network_module.create_network(
-                    1.0,
-                    args.network_dim,
-                    args.network_alpha,
-                    vae,
-                    None,
-                    transformer,
-                    **net_kwargs,
-                )
+            network = network_module.create_arch_network(
+                1.0,
+                args.network_dim,
+                args.network_alpha,
+                vae,
+                None,
+                transformer,
+                neuron_dropout=args.network_dropout,
+                **net_kwargs,
+            )
         if network is None:
             return None
 
@@ -1878,8 +1936,17 @@ class NetworkTrainer:
                     if len(weights) > i:
                         weights.pop(i)
                 # print(f"save model hook: {len(weights)} weights will be saved")
+                if self._training_progress is not None:
+                    torch.save(self._training_progress, os.path.join(output_dir, train_utils.TRAINING_PROGRESS_NAME))
 
         def load_model_hook(models, input_dir):
+            self._training_progress = train_utils.load_training_progress(input_dir)
+            if self._training_progress is None:
+                logger.warning(
+                    "Legacy state has no training progress: restoring weights, optimizer, scheduler and RNG, "
+                    "but restarting epoch/global_step and data from zero (legacy behavior). "
+                    "Exact continuation requires a state saved with training_progress.pt."
+                )
             # remove models except network
             remove_indices = []
             for i, model in enumerate(models):
@@ -1894,6 +1961,52 @@ class NetworkTrainer:
 
         # resume from local or huggingface. accelerator.step is set
         self.resume_from_local_or_hf_if_specified(accelerator, args)  # accelerator.load_state(args.resume)
+
+    def _prepare_training_progress(self, args, accelerator, train_dataloader, train_dataset_group):
+        loader_config = {
+            "batches_per_epoch": len(train_dataloader),
+            "gradient_accumulation_steps": args.gradient_accumulation_steps,
+            "num_processes": accelerator.num_processes,
+            "num_workers": train_dataloader.num_workers,
+            "persistent_workers": train_dataloader.persistent_workers,
+            "num_timestep_buckets": args.num_timestep_buckets,
+            "max_train_steps": args.max_train_steps,
+        }
+        resumed = self._training_progress is not None
+        if resumed:
+            progress = self._training_progress
+            if progress["loader_config"] != loader_config:
+                raise ValueError("resume: data/accumulation configuration changed; use the original loader configuration")
+            if progress["next_batch"] > len(train_dataloader):
+                raise ValueError("resume: next_batch exceeds epoch length; use a complete, compatible state directory")
+            batches_per_epoch = len(train_dataloader)
+            expected_step = progress["epoch"] * math.ceil(batches_per_epoch / args.gradient_accumulation_steps)
+            expected_step += math.ceil(progress["next_batch"] / args.gradient_accumulation_steps)
+            if progress["global_step"] != expected_step or (
+                progress["next_batch"] != batches_per_epoch and progress["next_batch"] % args.gradient_accumulation_steps
+            ):
+                raise ValueError("resume: inconsistent update/batch counters; use a state saved at an optimizer update")
+            train_utils.restore_dataset_epochs(train_dataset_group, progress["dataset_seeds"], progress["dataset_epochs"])
+            self.timestep_range_pool = progress["timestep_range_pool"]
+        else:
+            progress = {
+                "version": 1,
+                "epoch": 0,
+                "next_batch": 0,
+                "global_step": 0,
+                "finished": False,
+                "epoch_rng": None,
+                "loader_seed_rng": None,
+                "sampler_rng": None,
+                "dataset_seeds": [dataset.seed for dataset in train_dataset_group.datasets],
+                "dataset_epochs": [dataset.current_epoch for dataset in train_dataset_group.datasets],
+                "loader_config": loader_config,
+                "loss_list": [],
+                "loss_total": 0.0,
+                "timestep_range_pool": self.timestep_range_pool,
+            }
+            self._training_progress = progress
+        return progress, resumed
 
     def _run_training_loop(
         self,
@@ -1942,11 +2055,7 @@ class NetworkTrainer:
         accelerator.print(f"  total optimization steps / 学習ステップ数: {args.max_train_steps}")
 
         # reconstruct net_kwargs for metadata
-        net_kwargs = {}
-        if args.network_args is not None:
-            for net_arg in args.network_args:
-                key, value = net_arg.split("=")
-                net_kwargs[key] = value
+        net_kwargs = parse_nested_args(args, "network_args", literal=False)
 
         # TODO refactor metadata creation and move to util
         metadata = {
@@ -1985,7 +2094,7 @@ class NetworkTrainer:
             "ss_logit_mean": args.logit_mean,
             "ss_logit_std": args.logit_std,
             "ss_mode_scale": args.mode_scale,
-            "ss_guidance_scale": args.guidance_scale,
+            "ss_guidance_scale": 1.0,
             "ss_timestep_sampling": args.timestep_sampling,
             "ss_sigmoid_scale": args.sigmoid_scale,
             "ss_discrete_flow_shift": args.discrete_flow_shift,
@@ -2040,22 +2149,47 @@ class NetworkTrainer:
             if args.wandb_run_name:
                 init_kwargs["wandb"] = {"name": args.wandb_run_name}
             if args.log_tracker_config is not None:
-                init_kwargs = toml.load(args.log_tracker_config)
-            accelerator.init_trackers(
-                "network_train" if args.log_tracker_name is None else args.log_tracker_name,
-                config=train_utils.get_sanitized_config_or_none(args),
-                init_kwargs=init_kwargs,
-            )
+                init_kwargs = args._tracker_init_kwargs.copy()
+            restoring = self._training_progress is not None
+            python_rng, numpy_rng = random.getstate(), np.random.get_state()
+            devices = [accelerator.device] if accelerator.device.type == "cuda" else []
+            with torch.random.fork_rng(devices=devices, enabled=restoring):
+                try:
+                    accelerator.init_trackers(
+                        "network_train" if args.log_tracker_name is None else args.log_tracker_name,
+                        config=train_utils.get_sanitized_config_or_none(args),
+                        init_kwargs=init_kwargs,
+                    )
+                finally:
+                    if restoring:
+                        random.setstate(python_rng)
+                        np.random.set_state(numpy_rng)
 
-        # TODO skip until initial step
-        progress_bar = tqdm(range(args.max_train_steps), smoothing=0, disable=not accelerator.is_local_main_process, desc="steps")
-
-        epoch_to_start = 0
-        global_step = 0
+        progress, resumed = self._prepare_training_progress(args, accelerator, train_dataloader, train_dataset_group)
+        epoch_to_start = progress["epoch"]
+        global_step = progress["global_step"]
+        progress_bar = tqdm(
+            total=args.max_train_steps,
+            initial=global_step,
+            smoothing=0,
+            disable=not accelerator.is_local_main_process,
+            desc="steps",
+        )
         noise_scheduler = FlowMatchDiscreteScheduler(shift=args.discrete_flow_shift, reverse=True, solver="euler")
 
         loss_recorder = train_utils.LossRecorder()
-        del train_dataset_group
+        loss_recorder.loss_list = progress["loss_list"]
+        loss_recorder.loss_total = progress["loss_total"]
+
+        def update_progress(epoch, next_batch):
+            progress.update(
+                epoch=epoch,
+                next_batch=next_batch,
+                global_step=global_step,
+                dataset_epochs=[dataset.current_epoch for dataset in train_dataset_group.datasets],
+                loss_total=loss_recorder.loss_total,
+                timestep_range_pool=self.timestep_range_pool,
+            )
 
         # function for saving/removing
         save_dtype = train_utils.resolve_save_dtype(
@@ -2132,13 +2266,13 @@ class NetworkTrainer:
                 )
 
         # For --sample_at_first
-        if should_sample_images(args, global_step, epoch=0):
+        if not resumed and should_sample_images(args, global_step, epoch=0):
             optimizer_eval_fn()
             _do_sample(0, global_step)
             optimizer_train_fn()
-        if len(accelerator.trackers) > 0:
+        if not resumed and len(accelerator.trackers) > 0:
             # log empty object to commit the sample images to wandb
-            accelerator.log({}, step=0)
+            accelerator.log({}, step=global_step)
 
         # training loop
 
@@ -2154,6 +2288,8 @@ class NetworkTrainer:
         optimizer_train_fn()  # Set training mode
 
         for epoch in range(epoch_to_start, num_train_epochs):
+            if progress["finished"]:
+                break
             accelerator.print(f"\nepoch {epoch + 1}/{num_train_epochs}")
             current_epoch.value = epoch + 1
 
@@ -2161,7 +2297,28 @@ class NetworkTrainer:
 
             accelerator.unwrap_model(network).on_epoch_start(transformer)
 
-            for step, batch in enumerate(train_dataloader):
+            first_batch = progress["next_batch"] if epoch == epoch_to_start else 0
+            sampler = train_utils.get_dataloader_sampler(train_dataloader)
+            if global_step >= args.max_train_steps:
+                # A final step state precedes epoch events; finish those once
+                # without fetching or optimizing another batch.
+                batches = ()
+            elif resumed:
+                if progress["epoch_rng"] is None:
+                    progress["epoch_rng"] = torch.get_rng_state()
+                train_dataloader, batches = train_utils.resume_dataloader(train_dataloader, progress)
+                resumed = False
+            else:
+                # Reset the existing Accelerate skip wrapper after the resumed epoch.
+                if hasattr(train_dataloader.batch_sampler, "skip_batches"):
+                    train_dataloader.batch_sampler.skip_batches = 0
+                progress["epoch_rng"] = torch.get_rng_state()
+                if progress["loader_seed_rng"] is None:
+                    progress["loader_seed_rng"] = progress["epoch_rng"]
+                progress["sampler_rng"] = sampler.generator.get_state() if sampler.generator is not None else None
+                batches = train_dataloader
+
+            for step, batch in enumerate(batches, start=first_batch):
                 # torch.compiler.cudagraph_mark_step_begin() # for cudagraphs
 
                 latents = batch["latents"]
@@ -2220,12 +2377,16 @@ class NetworkTrainer:
                 else:
                     keys_scaled, mean_norm, maximum_norm = None, None, None
 
+                current_loss = loss.detach().item()
+                loss_recorder.add(epoch=epoch, step=step, loss=current_loss)
+
                 # Checks if the accelerator has performed an optimization step behind the scenes
                 if accelerator.sync_gradients:
                     if global_step == 0:
                         progress_bar.reset()  # exclude first step from progress bar, because it may take long due to initializations
                     progress_bar.update(1)
                     global_step += 1
+                    update_progress(epoch, step + 1)
 
                     # to avoid calling optimizer_eval_fn() too frequently, we call it only when we need to sample images or save the model
                     should_sampling = should_sample_images(args, global_step, epoch=None)
@@ -2242,17 +2403,13 @@ class NetworkTrainer:
                                 ckpt_name = train_utils.get_step_ckpt_name(args.output_name, global_step)
                                 save_model(ckpt_name, accelerator.unwrap_model(network), global_step, epoch)
 
-                                if args.save_state:
-                                    train_utils.save_and_remove_state_stepwise(args, accelerator, global_step)
-
                                 remove_step_no = train_utils.get_remove_step_no(args, global_step)
                                 if remove_step_no is not None:
                                     remove_ckpt_name = train_utils.get_step_ckpt_name(args.output_name, remove_step_no)
                                     remove_model(remove_ckpt_name)
-                        optimizer_train_fn()
+                        if not (should_saving and args.save_state and accelerator.is_main_process):
+                            optimizer_train_fn()
 
-                current_loss = loss.detach().item()
-                loss_recorder.add(epoch=epoch, step=step, loss=current_loss)
                 avr_loss: float = loss_recorder.moving_average
                 logs = {"avr_loss": avr_loss}  # , "lr": lr_scheduler.get_last_lr()[0]}
                 progress_bar.set_postfix(**logs)
@@ -2268,6 +2425,11 @@ class NetworkTrainer:
                     logs.update(grad_metrics)
                     logs.update(self.extra_step_logs(args, logs))
                     accelerator.log(logs, step=global_step)
+
+                update_progress(epoch, step + 1)
+                if accelerator.sync_gradients and should_saving and args.save_state and accelerator.is_main_process:
+                    train_utils.save_and_remove_state_stepwise(args, accelerator, global_step)
+                    optimizer_train_fn()
 
                 if global_step >= args.max_train_steps:
                     break
@@ -2293,14 +2455,22 @@ class NetworkTrainer:
                         remove_ckpt_name = train_utils.get_epoch_ckpt_name(args.output_name, remove_epoch_no)
                         remove_model(remove_ckpt_name)
 
-                    if args.save_state:
-                        train_utils.save_and_remove_state_on_epoch_end(args, accelerator, epoch + 1)
-
             _do_sample(epoch + 1, global_step)
+            # Epoch states describe the point after all epoch sample/log events.
+            # Keep the preceding sampler state to recreate persistent workers on resume.
+            completed_batches = progress["next_batch"]
+            epoch_length = progress["loader_config"]["batches_per_epoch"]
+            if completed_batches == epoch_length:
+                update_progress(epoch + 1, 0)
+                progress["epoch_rng"] = None
+                progress["sampler_rng"] = sampler.generator.get_state() if sampler.generator is not None else None
+            if args.save_every_n_epochs is not None and is_main_process and saving and args.save_state:
+                train_utils.save_and_remove_state_on_epoch_end(args, accelerator, epoch + 1)
             optimizer_train_fn()
 
             # end of epoch
 
+        progress["finished"] = True
         # metadata["ss_epoch"] = str(num_train_epochs)
         metadata["ss_training_finished_at"] = str(time.time())
 

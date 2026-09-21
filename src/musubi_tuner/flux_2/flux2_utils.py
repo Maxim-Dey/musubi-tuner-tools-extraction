@@ -16,29 +16,22 @@ from transformers import (
     Mistral3ForConditionalGeneration,
     Mistral3Config,
     AutoProcessor,
-    Qwen2Tokenizer,
-    Qwen3ForCausalLM,
 )
 from tqdm import tqdm
 
 from musubi_tuner.dataset.image_video_dataset import (
     ARCHITECTURE_FLUX_2_DEV,
     ARCHITECTURE_FLUX_2_DEV_FULL,
-    ARCHITECTURE_FLUX_2_KLEIN_4B,
-    ARCHITECTURE_FLUX_2_KLEIN_4B_FULL,
-    ARCHITECTURE_FLUX_2_KLEIN_9B,
-    ARCHITECTURE_FLUX_2_KLEIN_9B_FULL,
     BucketSelector,
 )
 from musubi_tuner.modules.fp8_optimization_utils import apply_fp8_monkey_patch
 from musubi_tuner.utils import image_utils
 from musubi_tuner.utils.lora_utils import load_safetensors_with_lora_and_fp8
-from musubi_tuner.zimage.zimage_utils import load_qwen3
 
-from .flux2_models import Flux2, Flux2Params, Klein4BParams, Klein9BParams
+from .flux2_models import Flux2, Flux2Params
 
 from musubi_tuner.flux_2 import flux2_models
-from musubi_tuner.utils.safetensors_utils import load_split_weights
+from musubi_tuner.utils.safetensors_utils import load_split_weights, get_split_weight_filenames
 
 import logging
 
@@ -46,8 +39,39 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 M3_TOKENIZER_ID = "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
+
+
+def validate_model_resources(args, *, train=False, latent=False, text=False):
+    from musubi_tuner.training.parser_common import config_error, validate_path
+
+    keys = (["dit"] if train else []) + (["vae"] if latent else []) + (["text_encoder"] if text else [])
+    for key in keys:
+        value = getattr(args, key, None)
+        source = getattr(args, "_config_sources", {}).get(key, f"CLI:{key}")
+        validate_path(value, source)
+        try:
+            companions = get_split_weight_filenames(value) or [value]
+            for path in companions:
+                validate_path(path, source)
+        except (OSError, ValueError) as error:
+            raise config_error(
+                args, key, value, str(error), "provide every numbered companion shard in the same directory"
+            ) from error
+    if text:
+        try:
+            # Processor construction reads only cached metadata/tokenizer files, never model weights.
+            AutoProcessor.from_pretrained(M3_TOKENIZER_ID, use_fast=False, local_files_only=True)
+        except (OSError, ValueError, ImportError) as error:
+            raise config_error(
+                args,
+                "text_encoder",
+                getattr(args, "text_encoder", None),
+                f"cached processor {M3_TOKENIZER_ID} unavailable: {error}",
+                "prepare its processor/tokenizer files in the normal Hugging Face cache before running",
+            ) from error
+
+
 OUTPUT_LAYERS_MISTRAL = [10, 20, 30]
-OUTPUT_LAYERS_QWEN3 = [9, 18, 27]
 MAX_LENGTH = 512
 UPSAMPLING_MAX_IMAGE_SIZE = 768**2
 SYSTEM_MESSAGE = """You are an AI that reasons about image descriptions. You give structured responses focusing on object relationships, object
@@ -59,54 +83,15 @@ class Flux2ModelInfo:
     params: Flux2Params
     defaults: dict[str, float | int]
     fixed_params: set[str]
-    guidance_distilled: bool
     architecture: str
     architecture_full: str
-    qwen_variant: Optional[str] = None  # None for Mistral
 
 
 FLUX2_MODEL_INFO = {
-    "klein-4b": Flux2ModelInfo(
-        params=Klein4BParams(),
-        qwen_variant="4B",
-        defaults={"guidance": 1.0, "num_steps": 4},
-        fixed_params={"guidance", "num_steps"},
-        guidance_distilled=True,
-        architecture=ARCHITECTURE_FLUX_2_KLEIN_4B,
-        architecture_full=ARCHITECTURE_FLUX_2_KLEIN_4B_FULL,
-    ),
-    "klein-base-4b": Flux2ModelInfo(
-        params=Klein4BParams(),
-        qwen_variant="4B",
-        defaults={"guidance": 4.0, "num_steps": 50},
-        fixed_params=set(),
-        guidance_distilled=False,
-        architecture=ARCHITECTURE_FLUX_2_KLEIN_4B,
-        architecture_full=ARCHITECTURE_FLUX_2_KLEIN_4B_FULL,
-    ),
-    "klein-9b": Flux2ModelInfo(
-        params=Klein9BParams(),
-        qwen_variant="8B",
-        defaults={"guidance": 1.0, "num_steps": 4},
-        fixed_params={"guidance", "num_steps"},
-        guidance_distilled=True,
-        architecture=ARCHITECTURE_FLUX_2_KLEIN_9B,
-        architecture_full=ARCHITECTURE_FLUX_2_KLEIN_9B_FULL,
-    ),
-    "klein-base-9b": Flux2ModelInfo(
-        params=Klein9BParams(),
-        qwen_variant="8B",
-        defaults={"guidance": 4.0, "num_steps": 50},
-        fixed_params=set(),
-        guidance_distilled=False,
-        architecture=ARCHITECTURE_FLUX_2_KLEIN_9B,
-        architecture_full=ARCHITECTURE_FLUX_2_KLEIN_9B_FULL,
-    ),
     "dev": Flux2ModelInfo(
         params=Flux2Params(),
         defaults={"guidance": 4.0, "num_steps": 50},
         fixed_params=set(),
-        guidance_distilled=True,
         architecture=ARCHITECTURE_FLUX_2_DEV,
         architecture_full=ARCHITECTURE_FLUX_2_DEV_FULL,
     ),
@@ -357,50 +342,6 @@ def denoise(
         if img_input_ids is not None:
             pred = pred[:, : img.shape[1]]
 
-        img = img + (t_prev - t_curr) * pred
-
-    return img
-
-
-def vanilla_guidance(x: torch.Tensor, cfg_val: float) -> torch.Tensor:
-    x_u, x_c = x.chunk(2)
-    x = x_u + cfg_val * (x_c - x_u)
-    return x
-
-
-def denoise_cfg(
-    model: Flux2,
-    img: Tensor,
-    img_ids: Tensor,
-    txt: Tensor,
-    txt_ids: Tensor,
-    uncond_txt: Tensor,
-    uncond_txt_ids: Tensor,
-    timesteps: list[float],
-    guidance: float,
-    img_cond_seq: Tensor | None = None,
-    img_cond_seq_ids: Tensor | None = None,
-):
-    for t_curr, t_prev in zip(tqdm(timesteps[:-1]), timesteps[1:]):
-        t_vec = torch.full((img.shape[0],), t_curr, dtype=img.dtype, device=img.device)
-
-        img_input = img
-        img_input_ids = img_ids
-        if img_cond_seq is not None:
-            img_input = torch.cat((img_input, img_cond_seq), dim=1)
-            img_input_ids = torch.cat((img_input_ids, img_cond_seq_ids), dim=1)
-
-        with torch.no_grad(), torch.autocast(device_type=img.device.type, dtype=img.dtype):
-            pred_cond = model(x=img_input, x_ids=img_input_ids, timesteps=t_vec, ctx=txt, ctx_ids=txt_ids, guidance=None)
-            pred_uncond = model(
-                x=img_input, x_ids=img_input_ids, timesteps=t_vec, ctx=uncond_txt, ctx_ids=uncond_txt_ids, guidance=None
-            )
-
-        if img_cond_seq is not None:
-            pred_cond = pred_cond[:, : img.shape[1]]
-            pred_uncond = pred_uncond[:, : img.shape[1]]
-
-        pred = pred_uncond + guidance * (pred_cond - pred_uncond)
         img = img + (t_prev - t_curr) * pred
 
     return img
@@ -736,68 +677,6 @@ class Mistral3Embedder(nn.Module):
             return messages
 
 
-class Qwen3Embedder(nn.Module):
-    def __init__(
-        self,
-        tokenizer: Qwen2Tokenizer,
-        model: Qwen3ForCausalLM,
-    ):
-        super().__init__()
-
-        self.model = model
-        self.tokenizer = tokenizer
-        self.max_length = MAX_LENGTH
-
-    @property
-    def dtype(self):
-        return self.model.dtype
-
-    @property
-    def device(self):
-        return self.model.device
-
-    def to(self, *args, **kwargs):
-        # FIXME: chainging dtype not supported yet
-        return self.model.to(*args, **kwargs)
-
-    def forward(self, txt: list[str]):
-        all_input_ids = []
-        all_attention_masks = []
-
-        for prompt in txt:
-            messages = [{"role": "user", "content": prompt}]
-            text = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-                enable_thinking=False,
-            )
-
-            model_inputs = self.tokenizer(
-                text,
-                return_tensors="pt",
-                padding="max_length",
-                truncation=True,
-                max_length=self.max_length,
-            )
-
-            all_input_ids.append(model_inputs["input_ids"])
-            all_attention_masks.append(model_inputs["attention_mask"])
-
-        input_ids = torch.cat(all_input_ids, dim=0).to(self.model.device)
-        attention_mask = torch.cat(all_attention_masks, dim=0).to(self.model.device)
-
-        output = self.model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            output_hidden_states=True,
-            use_cache=False,
-        )
-
-        out = torch.stack([output.hidden_states[k] for k in OUTPUT_LAYERS_QWEN3], dim=1)
-        return rearrange(out, "b c l d -> b l (c d)")
-
-
 def load_text_embedder(
     model_version_info: Flux2ModelInfo,
     ckpt_path: str,
@@ -805,12 +684,5 @@ def load_text_embedder(
     device: Union[str, torch.device],
     disable_mmap: bool = False,
     state_dict: Optional[dict] = None,
-) -> Union[Mistral3Embedder, Qwen3Embedder]:
-    if model_version_info.qwen_variant is None:
-        return Mistral3Embedder(ckpt_path, dtype, device, disable_mmap, state_dict)
-
-    variant = model_version_info.qwen_variant
-    is_8b = variant == "8B"
-    tokenizer_id = "Qwen/Qwen3-8B" if is_8b else "Qwen/Qwen3-4B"
-    tokenizer, qwen3 = load_qwen3(ckpt_path, dtype, device, disable_mmap, state_dict, is_8b=is_8b, tokenizer_id=tokenizer_id)
-    return Qwen3Embedder(tokenizer, qwen3)
+) -> Mistral3Embedder:
+    return Mistral3Embedder(ckpt_path, dtype, device, disable_mmap, state_dict)
