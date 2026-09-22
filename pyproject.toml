@@ -6,7 +6,6 @@ readme = "README.md"
 requires-python = ">=3.10, <3.13"
 dependencies = [
     "accelerate==1.6.0",
-    "av==14.0.1",
     "bitsandbytes",
     "diffusers==0.32.1",
     "einops==0.7.0",
@@ -19,11 +18,6 @@ dependencies = [
     "tqdm==4.67.1",
     "transformers==4.57.6",
     "voluptuous==0.15.2",
-    # Wan2.1
-    "ftfy==6.3.1",
-    "easydict==1.13",
-    # FLUX.1 Kontext
-    "sentencepiece==0.2.1",
 ]
 
 [project.optional-dependencies]
@@ -43,12 +37,8 @@ cu132 = [
     "torch>=2.12.0",
     "torchvision>=0.27.0",
 ]
-gui = [
-    "gradio>=4.0.0, <6.0.0",
-]
-hidream_o1 = [
-    "sensecraft[dinov3]>=0.3.11",
-]
+
+
 
 [tool.uv]
 conflicts = [
@@ -65,7 +55,6 @@ dev = [
   "ascii-magic==2.3.0",
   "matplotlib==3.10.0",
   "tensorboard",
-  "prompt-toolkit==3.0.51",
   # ruff 0.16.0 enabled many new lint rules by default, producing ~2000 new findings;
   # pinned below 0.16 until those are triaged and resolved
   "ruff>=0.12.10,<0.16",
@@ -132,33 +121,7 @@ force-exclude = true
 # Single-path or Relative patterns
 # Extends the default exclude patterns documented at https://docs.astral.sh/ruff/settings/#exclude
 extend-exclude = [
-  "src/musubi_tuner/flux/flux_models.py",
-  "src/musubi_tuner/frame_pack/hunyuan.py",
-  "src/musubi_tuner/frame_pack/hunyuan_video_packed.py",
-  "src/musubi_tuner/frame_pack/k_diffusion_hunyuan.py",
-  "src/musubi_tuner/hunyuan_model/autoencoder_kl_causal_3d.py",
-  "src/musubi_tuner/hunyuan_model/pipeline_hunyuan_video.py",
-  "src/musubi_tuner/hidream_o1/qwen3_vl_transformers.py",
-  "src/musubi_tuner/hidream_o1/flash_scheduler.py",
   "src/musubi_tuner/modules/scheduling_flow_match_discrete.py",
-  "src/musubi_tuner/modules/unet_causal_3d_blocks.py",
-  "src/musubi_tuner/wan/configs/__init__.py",
-  "src/musubi_tuner/wan/configs/shared_config.py",
-  "src/musubi_tuner/wan/configs/wan_i2v_14B.py",
-  "src/musubi_tuner/wan/configs/wan_i2v_A14B.py",
-  "src/musubi_tuner/wan/configs/wan_t2v_14B.py",
-  "src/musubi_tuner/wan/configs/wan_t2v_1_3B.py",
-  "src/musubi_tuner/wan/configs/wan_t2v_A14B.py",
-  "src/musubi_tuner/wan/modules/attention.py",
-  "src/musubi_tuner/wan/modules/clip.py",
-  "src/musubi_tuner/wan/modules/model.py",
-  "src/musubi_tuner/wan/modules/t5.py",
-  "src/musubi_tuner/wan/modules/tokenizers.py",
-  "src/musubi_tuner/wan/modules/vae.py",
-  "src/musubi_tuner/wan/modules/xlm_roberta.py",
-  "src/musubi_tuner/wan/utils/fm_solvers.py",
-  "src/musubi_tuner/wan/utils/fm_solvers_unipc.py",
-  "src/musubi_tuner/wan/utils/utils.py",
 ]
 
 [tool.ruff.format]
@@ -177,30 +140,4 @@ docstring-code-line-length = "dynamic"
 # "path/to/file.py" = ["E402"]
 # # Ignore `D` rules everywhere except for the `src/` directory.
 # "!src/**.py" = ["D"]
-"src/musubi_tuner/flux/flux_models.py" = ["ALL"]
-"src/musubi_tuner/frame_pack/hunyuan.py" = ["ALL"]
-"src/musubi_tuner/frame_pack/hunyuan_video_packed.py" = ["ALL"]
-"src/musubi_tuner/frame_pack/k_diffusion_hunyuan.py" = ["ALL"]
-"src/musubi_tuner/hunyuan_model/autoencoder_kl_causal_3d.py" = ["ALL"]
-"src/musubi_tuner/hunyuan_model/pipeline_hunyuan_video.py" = ["ALL"]
-"src/musubi_tuner/hidream_o1/qwen3_vl_transformers.py" = ["ALL"]
-"src/musubi_tuner/hidream_o1/flash_scheduler.py" = ["ALL"]
 "src/musubi_tuner/modules/scheduling_flow_match_discrete.py" = ["ALL"]
-"src/musubi_tuner/modules/unet_causal_3d_blocks.py" = ["ALL"]
-"src/musubi_tuner/wan/configs/__init__.py" = ["ALL"]
-"src/musubi_tuner/wan/configs/shared_config.py" = ["ALL"]
-"src/musubi_tuner/wan/configs/wan_i2v_14B.py" = ["ALL"]
-"src/musubi_tuner/wan/configs/wan_i2v_A14B.py" = ["ALL"]
-"src/musubi_tuner/wan/configs/wan_t2v_14B.py" = ["ALL"]
-"src/musubi_tuner/wan/configs/wan_t2v_1_3B.py" = ["ALL"]
-"src/musubi_tuner/wan/configs/wan_t2v_A14B.py" = ["ALL"]
-"src/musubi_tuner/wan/modules/attention.py" = ["ALL"]
-"src/musubi_tuner/wan/modules/clip.py" = ["ALL"]
-"src/musubi_tuner/wan/modules/model.py" = ["ALL"]
-"src/musubi_tuner/wan/modules/t5.py" = ["ALL"]
-"src/musubi_tuner/wan/modules/tokenizers.py" = ["ALL"]
-"src/musubi_tuner/wan/modules/vae.py" = ["ALL"]
-"src/musubi_tuner/wan/modules/xlm_roberta.py" = ["ALL"]
-"src/musubi_tuner/wan/utils/fm_solvers.py" = ["ALL"]
-"src/musubi_tuner/wan/utils/fm_solvers_unipc.py" = ["ALL"]
-"src/musubi_tuner/wan/utils/utils.py" = ["ALL"]

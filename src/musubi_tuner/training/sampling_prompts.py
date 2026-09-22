@@ -1,168 +1,101 @@
-"""Prompt loading and sampling trigger helpers used during training."""
+"""Original-image prompt readers and unchanged sampling triggers."""
 
 import json
-import logging
+import math
 import re
-from typing import Dict
-
+from pathlib import Path
 import toml
 
 
-logger = logging.getLogger(__name__)
+PROMPT_TYPES = {
+    "prompt": str,
+    "negative_prompt": str,
+    "width": int,
+    "height": int,
+    "seed": int,
+    "sample_steps": int,
+    "cfg_scale": float,
+    "discrete_flow_shift": float,
+}
+TEXT_OPTIONS = {
+    "w": "width",
+    "h": "height",
+    "d": "seed",
+    "s": "sample_steps",
+    "l": "cfg_scale",
+    "fs": "discrete_flow_shift",
+    "n": "negative_prompt",
+}
 
 
-def line_to_prompt_dict(line: str) -> dict:
-    # subset of gen_img_diffusers
-    prompt_args = line.split(" --")
-    prompt_dict = {}
-    prompt_dict["prompt"] = prompt_args[0]
+def validate_prompt(prompt, source):
+    if not isinstance(prompt, dict):
+        raise ValueError(f"{source}: expected a prompt object or text line; correct the record")
+    for key, value in prompt.items():
+        if key not in PROMPT_TYPES:
+            raise ValueError(f"{source}: unsupported prompt field {key}; remove it for original-image sampling")
+        kind = PROMPT_TYPES[key]
+        valid = type(value) is kind if kind is not float else type(value) in (int, float) and math.isfinite(value)
+        if not valid:
+            raise ValueError(f"{source}: {key} has invalid type/value; supply {kind.__name__}")
+        minimum = 16 if key in ("width", "height") else 1 if key == "sample_steps" else 0
+        if kind in (int, float) and (value < minimum or (key == "discrete_flow_shift" and value == 0)):
+            raise ValueError(f"{source}: invalid {key}={value}; use a positive usable value (dimensions >=16)")
+    return prompt
 
-    for parg in prompt_args[1:]:
-        if not parg.strip():
-            continue
+
+def line_to_prompt_dict(line: str, source="prompt") -> dict:
+    parts = line.split(" --")
+    result = {"prompt": parts[0]}
+    for part in parts[1:]:
+        match = re.fullmatch(r"([a-z]+)\s+(.+)", part, re.IGNORECASE)
+        if not match or match[1].lower() not in TEXT_OPTIONS:
+            raise ValueError(f"{source}: unsupported or malformed --{part}; use --w/--h/--d/--s/--l/--fs/--n")
+        key = TEXT_OPTIONS[match[1].lower()]
+        raw = match[2]
         try:
-            m = re.match(r"w (\d+)", parg, re.IGNORECASE)
-            if m:
-                prompt_dict["width"] = int(m.group(1))
-                continue
-
-            m = re.match(r"h (\d+)", parg, re.IGNORECASE)
-            if m:
-                prompt_dict["height"] = int(m.group(1))
-                continue
-
-            m = re.match(r"f (\d+)", parg, re.IGNORECASE)
-            if m:
-                prompt_dict["frame_count"] = int(m.group(1))
-                continue
-
-            m = re.match(r"d (\d+)", parg, re.IGNORECASE)
-            if m:
-                prompt_dict["seed"] = int(m.group(1))
-                continue
-
-            m = re.match(r"s (\d+)", parg, re.IGNORECASE)
-            if m:  # steps
-                prompt_dict["sample_steps"] = max(1, min(1000, int(m.group(1))))
-                continue
-
-            m = re.match(r"g ([\d\.]+)", parg, re.IGNORECASE)
-            if m:  # scale
-                prompt_dict["guidance_scale"] = float(m.group(1))
-                continue
-
-            m = re.match(r"fs ([\d\.]+)", parg, re.IGNORECASE)
-            if m:  # scale
-                prompt_dict["discrete_flow_shift"] = float(m.group(1))
-                continue
-
-            m = re.match(r"fsa ([\d\.]+)", parg, re.IGNORECASE)
-            if m:  # audio target flow shift (MiniMax-H3 joint AV)
-                prompt_dict["discrete_flow_shift_audio"] = float(m.group(1))
-                continue
-
-            m = re.match(r"ofps (\d+)", parg, re.IGNORECASE)
-            if m:  # output fps (MiniMax-H3 temporal stretch)
-                prompt_dict["output_fps"] = int(m.group(1))
-                continue
-
-            m = re.match(r"skb (\d+)", parg, re.IGNORECASE)
-            if m:  # stretch keep bands (MiniMax-H3 temporal stretch)
-                prompt_dict["stretch_keep_bands"] = int(m.group(1))
-                continue
-
-            m = re.match(r"l ([\d\.]+)", parg, re.IGNORECASE)
-            if m:  # scale
-                prompt_dict["cfg_scale"] = float(m.group(1))
-                continue
-
-            m = re.match(r"n (.+)", parg, re.IGNORECASE)
-            if m:  # negative prompt
-                prompt_dict["negative_prompt"] = m.group(1)
-                continue
-
-            m = re.match(r"i (.+)", parg, re.IGNORECASE)
-            if m:  # image path
-                prompt_dict["image_path"] = m.group(1).strip()
-                continue
-
-            m = re.match(r"ei (.+)", parg, re.IGNORECASE)
-            if m:  # end image path
-                prompt_dict["end_image_path"] = m.group(1).strip()
-                continue
-
-            m = re.match(r"cn (.+)", parg, re.IGNORECASE)
-            if m:
-                prompt_dict["control_video_path"] = m.group(1).strip()
-                continue
-
-            m = re.match(r"ci (.+)", parg, re.IGNORECASE)
-            if m:
-                # can be multiple control images
-                control_image_path = m.group(1).strip()
-                if "control_image_path" not in prompt_dict:
-                    prompt_dict["control_image_path"] = []
-                prompt_dict["control_image_path"].append(control_image_path)
-                continue
-
-            m = re.match(r"of (.+)", parg, re.IGNORECASE)
-            if m:  # one frame inference options
-                prompt_dict["one_frame"] = m.group(1).strip()
-                continue
-
-            m = re.match(r"o (.+)", parg, re.IGNORECASE)
-            if m:  # output file name (generation scripts with a prompt file)
-                prompt_dict["output_name"] = m.group(1).strip()
-                continue
-
-            m = re.match(r"rj (.+)", parg, re.IGNORECASE)
-            if m:  # reference JSONL (MiniMax-H3 Ref2VA)
-                prompt_dict["reference_jsonl"] = m.group(1).strip()
-                continue
-
-            m = re.match(r"ref (.+)", parg, re.IGNORECASE)
-            if m:
-                # can be multiple inline references (MiniMax-H3 Ref2VA)
-                if "ref" not in prompt_dict:
-                    prompt_dict["ref"] = []
-                prompt_dict["ref"].append(m.group(1).strip())
-                continue
-
-            logger.warning(f"Unknown prompt option ignored / 不明なオプションを無視します: --{parg}")
-
-        except ValueError as ex:
-            logger.error(f"Exception in parsing / 解析エラー: {parg}")
-            logger.error(ex)
-
-    return prompt_dict
+            if PROMPT_TYPES[key] is int and not re.fullmatch(r"[+-]?\d+", raw):
+                raise ValueError("expected an integer")
+            result[key] = PROMPT_TYPES[key](raw)
+        except ValueError as error:
+            raise ValueError(f"{source}: malformed {key}={raw!r}; supply a complete {PROMPT_TYPES[key].__name__} value") from error
+    return validate_prompt(result, source)
 
 
-def load_prompts(prompt_file: str) -> list[Dict]:
-    # read prompts
-    if prompt_file.endswith(".txt"):
-        with open(prompt_file, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        prompts = [line.strip() for line in lines if len(line.strip()) > 0 and line[0] != "#"]
-    elif prompt_file.endswith(".toml"):
-        with open(prompt_file, "r", encoding="utf-8") as f:
-            data = toml.load(f)
-        prompts = [dict(**data["prompt"], **subset) for subset in data["prompt"]["subset"]]
-    elif prompt_file.endswith(".json"):
-        with open(prompt_file, "r", encoding="utf-8") as f:
-            prompts = json.load(f)
-
-    # preprocess prompts
-    for i in range(len(prompts)):
-        prompt_dict = prompts[i]
-        if isinstance(prompt_dict, str):
-            prompt_dict = line_to_prompt_dict(prompt_dict)
-            prompts[i] = prompt_dict
-        assert isinstance(prompt_dict, dict)
-
-        # Adds an enumerator to the dict based on prompt position. Used later to name image files. Also cleanup of extra data in original prompt dict.
-        prompt_dict["enum"] = i
-        prompt_dict.pop("subset", None)
-
+def load_prompts(prompt_file: str) -> list[dict]:
+    path = Path(prompt_file)
+    try:
+        if path.suffix == ".txt":
+            records = [
+                (line.strip(), f"{path}:{number}")
+                for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+                if line.strip() and not line.lstrip().startswith("#")
+            ]
+        elif path.suffix == ".json":
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, list):
+                raise ValueError("expected a list of prompts")
+            records = [(record, f"{path}: record {i + 1}") for i, record in enumerate(data)]
+        elif path.suffix == ".toml":
+            data = toml.load(path)
+            if set(data) != {"prompt"} or not isinstance(data["prompt"], dict):
+                raise ValueError("expected [prompt] and [[prompt.subset]] records")
+            common = data["prompt"].copy()
+            subsets = common.pop("subset", None)
+            validate_prompt(common, f"{path}: prompt defaults")
+            if not isinstance(subsets, list) or any(not isinstance(item, dict) for item in subsets):
+                raise ValueError("expected [[prompt.subset]] records")
+            records = [({**common, **item}, f"{path}: subset {i + 1}") for i, item in enumerate(subsets)]
+        else:
+            raise ValueError("use a .txt, .toml or .json prompt file")
+    except (OSError, ValueError, TypeError) as error:
+        raise ValueError(f"{path}: cannot read prompts: {error}; correct the file") from error
+    if not records:
+        raise ValueError(f"{path}: no prompts; provide at least one original-image prompt")
+    prompts = []
+    for record, source in records:
+        prompt = line_to_prompt_dict(record, source) if isinstance(record, str) else validate_prompt(record, source)
+        prompts.append({**prompt, "enum": len(prompts)})
     return prompts
 
 

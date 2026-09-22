@@ -435,7 +435,6 @@ class QwenImageEncoder3d(nn.Module):
         attn_scales (list of float): Scales at which to apply attention mechanisms.
         temperal_downsample (list of bool): Whether to downsample temporally in each block.
         dropout (float): Dropout rate for the dropout layers.
-        input_channels (int): Number of input channels.
         non_linearity (str): Type of non-linearity to use.
     """
 
@@ -448,7 +447,6 @@ class QwenImageEncoder3d(nn.Module):
         attn_scales=[],
         temperal_downsample=[True, True, False],
         dropout=0.0,
-        input_channels: int = 3,
         non_linearity: str = "silu",
     ):
         super().__init__()
@@ -465,7 +463,7 @@ class QwenImageEncoder3d(nn.Module):
         scale = 1.0
 
         # init block
-        self.conv_in = QwenImageCausalConv3d(input_channels, dims[0], 3, padding=1)
+        self.conv_in = QwenImageCausalConv3d(3, dims[0], 3, padding=1)
 
         # downsample blocks
         self.down_blocks = nn.ModuleList([])
@@ -613,7 +611,6 @@ class QwenImageDecoder3d(nn.Module):
         attn_scales (list of float): Scales at which to apply attention mechanisms.
         temperal_upsample (list of bool): Whether to upsample temporally in each block.
         dropout (float): Dropout rate for the dropout layers.
-        output_channels (int): Number of output channels.
         non_linearity (str): Type of non-linearity to use.
     """
 
@@ -626,7 +623,6 @@ class QwenImageDecoder3d(nn.Module):
         attn_scales=[],
         temperal_upsample=[False, True, True],
         dropout=0.0,
-        output_channels: int = 3,
         non_linearity: str = "silu",
     ):
         super().__init__()
@@ -678,7 +674,7 @@ class QwenImageDecoder3d(nn.Module):
 
         # output blocks
         self.norm_out = QwenImageRMS_norm(out_dim, images=False)
-        self.conv_out = QwenImageCausalConv3d(out_dim, output_channels, 3, padding=1)
+        self.conv_out = QwenImageCausalConv3d(out_dim, 3, 3, padding=1)
 
         self.gradient_checkpointing = False
 
@@ -776,7 +772,6 @@ class AutoencoderKLQwenImage(nn.Module):  # ModelMixin, ConfigMixin, FromOrigina
             2.8251,
             1.9160,
         ],
-        input_channels: int = 3,
     ) -> None:
         super().__init__()
 
@@ -787,14 +782,12 @@ class AutoencoderKLQwenImage(nn.Module):  # ModelMixin, ConfigMixin, FromOrigina
         self.latents_std = latents_std
 
         self.encoder = QwenImageEncoder3d(
-            base_dim, z_dim * 2, dim_mult, num_res_blocks, attn_scales, self.temperal_downsample, dropout, input_channels
+            base_dim, z_dim * 2, dim_mult, num_res_blocks, attn_scales, self.temperal_downsample, dropout
         )
         self.quant_conv = QwenImageCausalConv3d(z_dim * 2, z_dim * 2, 1)
         self.post_quant_conv = QwenImageCausalConv3d(z_dim, z_dim, 1)
 
-        self.decoder = QwenImageDecoder3d(
-            base_dim, z_dim, dim_mult, num_res_blocks, attn_scales, self.temperal_upsample, dropout, input_channels
-        )
+        self.decoder = QwenImageDecoder3d(base_dim, z_dim, dim_mult, num_res_blocks, attn_scales, self.temperal_upsample, dropout)
 
         self.spatial_compression_ratio = 2 ** len(self.temperal_downsample)
 

@@ -1,9 +1,18 @@
 import argparse
 import gc
+import ast
+import importlib
+import importlib.util
+import inspect
+import math
+import os
+from pathlib import Path
+import re
 from typing import Optional
 
 
 import numpy as np
+import toml
 import torch
 from tqdm import tqdm
 from accelerate import Accelerator
@@ -11,22 +20,13 @@ from accelerate import Accelerator
 from musubi_tuner.dataset.image_video_dataset import (
     ARCHITECTURE_QWEN_IMAGE,
     ARCHITECTURE_QWEN_IMAGE_FULL,
-    ARCHITECTURE_QWEN_IMAGE_EDIT,
-    ARCHITECTURE_QWEN_IMAGE_EDIT_FULL,
-    ARCHITECTURE_QWEN_IMAGE_LAYERED,
-    ARCHITECTURE_QWEN_IMAGE_LAYERED_FULL,
 )
 from musubi_tuner.qwen_image import qwen_image_autoencoder_kl, qwen_image_model, qwen_image_utils
-from musubi_tuner.hv_train_network import (
-    DiTOutput,
-    NetworkTrainer,
-    load_prompts,
-    clean_memory_on_device,
-    setup_parser_common,
-    read_config_from_file,
-)
+from musubi_tuner.training.trainer_base import DiTOutput, NetworkTrainer
+from musubi_tuner.training.sampling_prompts import load_prompts
+from musubi_tuner.training.accelerator_setup import clean_memory_on_device
+from musubi_tuner.training.parser_common import setup_parser_common, read_config_from_file
 from musubi_tuner.utils import model_utils
-from musubi_tuner.utils.sai_model_spec import CUSTOM_ARCH_QWEN_IMAGE_EDIT_PLUS, CUSTOM_ARCH_QWEN_IMAGE_EDIT_2511
 
 import logging
 
@@ -37,167 +37,62 @@ logging.basicConfig(level=logging.INFO)
 class QwenImageNetworkTrainer(NetworkTrainer):
     def __init__(self):
         super().__init__()
-        self.is_edit = None
-        self.is_layered = None
-        self.vae_frame_stride = 1  # for Qwen-Image, frame stride is 1
+
+    def validate_training_inputs(self, args):
+        validate_training_args(args)
+
+    def validate_training_dataset(self, args, dataset):
+        source = getattr(args, "_config_source", "CLI")
+        if not args.sdpa and not args.split_attn and any(item.batch_size > 1 for item in dataset.datasets):
+            raise ValueError(
+                f"{source}: split_attn: FlashAttention/xformers require split attention for padded text batches; enable split_attn or use SDPA"
+            )
+        processes = int(os.environ.get("WORLD_SIZE", "1"))
+        steps = args.max_train_steps
+        if args.max_train_epochs is not None:
+            steps = args.max_train_epochs * math.ceil(len(dataset) / processes / args.gradient_accumulation_steps)
+        validate_scheduler_args(args, steps * processes)
 
     # region model specific
 
     @property
     def architecture(self) -> str:
-        assert self.is_edit is not None and self.is_layered is not None
-        if self.is_layered:
-            return ARCHITECTURE_QWEN_IMAGE_LAYERED
-        if self.is_edit:
-            return ARCHITECTURE_QWEN_IMAGE_EDIT
         return ARCHITECTURE_QWEN_IMAGE
 
     @property
     def architecture_full_name(self) -> str:
-        assert self.is_edit is not None and self.is_layered is not None
-        if self.is_layered:
-            return ARCHITECTURE_QWEN_IMAGE_LAYERED_FULL
-        if self.is_edit:
-            return ARCHITECTURE_QWEN_IMAGE_EDIT_FULL
         return ARCHITECTURE_QWEN_IMAGE_FULL
 
     def handle_model_specific_args(self, args):
         self.dit_dtype = torch.bfloat16
-        self._i2v_training = False
-        self._control_training = False
-        self.default_guidance_scale = 1.0  # not used
-        self.is_edit = args.is_edit
-        self.is_layered = args.is_layered
 
-        if args.metadata_arch is None and args.model_version == "edit-2509":
-            args.metadata_arch = CUSTOM_ARCH_QWEN_IMAGE_EDIT_PLUS  # to notify Edit-Plus mode for sai_model_spec
-        elif args.metadata_arch is None and args.model_version == "edit-2511":
-            args.metadata_arch = CUSTOM_ARCH_QWEN_IMAGE_EDIT_2511  # to notify Edit-2511 mode for sai_model_spec
-
-        assert self.is_layered or not args.remove_first_image_from_target, (
-            "--remove_first_image_from_target can only be used with layered model."
-        )
-
-    def process_sample_prompts(
-        self,
-        args: argparse.Namespace,
-        accelerator: Accelerator,
-        sample_prompts: str,
-    ):
+    def process_sample_prompts(self, args, accelerator, sample_prompts):
         device = accelerator.device
-
-        logger.info(f"cache Text Encoder outputs for sample prompt: {sample_prompts}")
         prompts = load_prompts(sample_prompts)
-
-        # Load Qwen2.5-VL
         vl_dtype = torch.float8_e4m3fn if args.fp8_vl else torch.bfloat16
         tokenizer, text_encoder = qwen_image_utils.load_qwen2_5_vl(args.text_encoder, vl_dtype, device, disable_mmap=True)
-        is_edit = self.is_edit
-        vl_processor = qwen_image_utils.load_vl_processor() if is_edit else None
-
-        # Encode with VLM
-        logger.info("Encoding with VLM")
-
-        sample_prompts_te_outputs = {}  # prompt -> embed, or (prompt, control_image_path) -> embed
-        control_image_nps = {}  # (control_image_path) -> control_image_np
-
-        def embed_key_fn(p, ctrl_img_paths):
-            nonlocal is_edit
-            return p if not is_edit else (p, tuple(ctrl_img_paths) if ctrl_img_paths is not None else None)
-
+        sample_prompts_te_outputs = {}
         with torch.amp.autocast(device_type=device.type, dtype=vl_dtype), torch.no_grad():
             for prompt_dict in prompts:
-                width, height = prompt_dict.get("width", 256), prompt_dict.get("height", 256)
-                width = (width // 8) * 8
-                height = (height // 8) * 8
-
-                is_edit = self.is_edit
-                if is_edit:
-                    # Load control image
-                    if "control_image_path" not in prompt_dict or len(prompt_dict["control_image_path"]) == 0:
-                        is_edit = False  # override to text-to-image if no control image provided
-                if args.is_layered:
-                    assert "control_image_path" in prompt_dict and len(prompt_dict["control_image_path"]) == 1, (
-                        "Layered training requires one control (source) image per sample"
-                    )
-
-                if is_edit or self.is_layered:
-                    resize_to_official = not args.is_layered
-                    resize_size = None if resize_to_official else (width, height)
-
-                    control_image_paths = prompt_dict["control_image_path"]
-                    control_image_tensors = []
-                    for control_image_path in control_image_paths:
-                        control_image_tensor, control_image_np, _ = qwen_image_utils.preprocess_control_image(
-                            control_image_path, resize_to_official, resize_size=resize_size
-                        )
-                        if not self.is_layered:
-                            control_image_tensor = control_image_tensor[:, :3, :, :]  # only use 3 channels for Edit
-                            control_image_np = control_image_np[:, :, :3]
-                        control_image_tensors.append(control_image_tensor)
-                        control_image_nps[control_image_path] = control_image_np
-
-                    prompt_dict["control_image_tensors"] = control_image_tensors
-                else:
-                    control_image_paths, control_image_tensors = None, None
-
                 if "negative_prompt" not in prompt_dict:
                     prompt_dict["negative_prompt"] = " "
-
-                if args.is_layered and prompt_dict.get("prompt", "").strip() == "":  # in ["", "."]:
-                    # generate automatic prompt for layered images
-                    image = control_image_nps[control_image_paths[0]]  # use the first control image for captioning
-                    prompt = qwen_image_utils.get_image_caption(vl_processor, text_encoder, image, use_en_prompt=True)
-                    logger.info(f"Generated automatic prompt for layered images: {prompt}")
-                    prompt_dict["prompt"] = prompt
-
-                for p in [prompt_dict.get("prompt", ""), prompt_dict.get("negative_prompt", " ")]:
-                    embed_key = embed_key_fn(p, control_image_paths)
-                    if p is None or embed_key in sample_prompts_te_outputs:
+                for prompt in [prompt_dict.get("prompt", ""), prompt_dict["negative_prompt"]]:
+                    if prompt in sample_prompts_te_outputs:
                         continue
-
-                    # encode prompt with image if available
-                    logger.info(f"cache Text Encoder outputs for prompt: {p} with image: {control_image_paths}")
-                    if not is_edit:
-                        embed, mask = qwen_image_utils.get_qwen_prompt_embeds(tokenizer, text_encoder, p)
-                    else:
-                        embed, mask = qwen_image_utils.get_qwen_prompt_embeds_with_image(
-                            vl_processor,
-                            text_encoder,
-                            p,
-                            [control_image_nps[c] for c in control_image_paths],
-                            model_version=args.model_version,
-                        )
-                    txt_len = mask.to(dtype=torch.bool).sum().item()  # length of the text in the batch
-                    embed = embed[:, :txt_len]
-                    sample_prompts_te_outputs[embed_key] = embed
-
+                    logger.info(f"cache Text Encoder outputs for prompt: {prompt}")
+                    embed, mask = qwen_image_utils.get_qwen_prompt_embeds(tokenizer, text_encoder, prompt)
+                    txt_len = mask.to(dtype=torch.bool).sum().item()
+                    sample_prompts_te_outputs[prompt] = embed[:, :txt_len]
         del tokenizer, text_encoder
         gc.collect()
         clean_memory_on_device(device)
-
-        # prepare sample parameters
         sample_parameters = []
         for prompt_dict in prompts:
-            is_edit = self.is_edit
-            if is_edit:
-                if "control_image_path" not in prompt_dict or len(prompt_dict["control_image_path"]) == 0:
-                    is_edit = False
             prompt_dict_copy = prompt_dict.copy()
-            control_image_paths = None if not is_edit else prompt_dict_copy["control_image_path"]
-
-            p = prompt_dict.get("prompt", "")
-            embed_key = embed_key_fn(p, control_image_paths)
-            prompt_dict_copy["vl_embed"] = sample_prompts_te_outputs[embed_key]
-
-            p = prompt_dict.get("negative_prompt", " ")
-            embed_key = embed_key_fn(p, control_image_paths)
-            prompt_dict_copy["negative_vl_embed"] = sample_prompts_te_outputs[embed_key]
-
+            prompt_dict_copy["vl_embed"] = sample_prompts_te_outputs[prompt_dict.get("prompt", "")]
+            prompt_dict_copy["negative_vl_embed"] = sample_prompts_te_outputs[prompt_dict["negative_prompt"]]
             sample_parameters.append(prompt_dict_copy)
-
         clean_memory_on_device(accelerator.device)
-
         return sample_parameters
 
     def do_inference(
@@ -212,18 +107,13 @@ class QwenImageNetworkTrainer(NetworkTrainer):
         sample_steps,
         width,
         height,
-        frame_count,
         generator,
         do_classifier_free_guidance,
-        guidance_scale,
         cfg_scale,
-        image_path=None,
-        control_video_path=None,
     ):
         """architecture dependent inference"""
         model: qwen_image_model.QwenImageTransformer2DModel = transformer
         vae: qwen_image_autoencoder_kl.AutoencoderKLQwenImage = vae
-        is_edit = self.is_edit
 
         device = accelerator.device
 
@@ -238,51 +128,15 @@ class QwenImageNetworkTrainer(NetworkTrainer):
 
         # 4. Prepare latent variables
         num_channels_latents = model.in_channels // 4
-        num_layers = 0 if not args.is_layered else frame_count
         # latents is packed
-        latents = qwen_image_utils.prepare_latents(
-            1, num_layers + 1, num_channels_latents, height, width, torch.bfloat16, device, generator
-        )
+        latents = qwen_image_utils.prepare_latents(1, num_channels_latents, height, width, torch.bfloat16, device, generator)
         img_shapes = [(1, height // qwen_image_utils.VAE_SCALE_FACTOR // 2, width // qwen_image_utils.VAE_SCALE_FACTOR // 2)]
-        if args.is_layered:
-            img_shapes = img_shapes * (num_layers + 1)
-
-        if is_edit:
-            if "control_image_path" not in sample_parameter or len(sample_parameter["control_image_path"]) == 0:
-                is_edit = False
-
-        if is_edit or self.is_layered:
-            # 4.1 Prepare control latents
-            logger.info("Preparing control latents from control image")
-            control_image_tensors = sample_parameter.get("control_image_tensors")  # list of tensors
-            vae.to(device)
-            vae.eval()
-
-            with torch.no_grad():
-                control_latents = [vae.encode_pixels_to_latents(t.to(device, vae.dtype)) for t in control_image_tensors]
-            control_latents = [cl.to(torch.bfloat16).to("cpu") for cl in control_latents]
-
-            vae.to("cpu")
-            clean_memory_on_device(device)
-
-            img_shapes = [img_shapes + [(1, cl.shape[-2] // 2, cl.shape[-1] // 2) for cl in control_latents]]
-            control_latent = [qwen_image_utils.pack_latents(cl) for cl in control_latents]  # B, C, 1, H, W -> B, H*W, C
-            control_latents = None
-            control_latent = torch.cat(control_latent, dim=1)  # concat controls in the sequence dimension
-            control_latent = control_latent.to(device=device, dtype=torch.bfloat16)
-
-        else:
-            control_latent = None
 
         # 5. Prepare timesteps
         sigmas = np.linspace(1.0, 1 / sample_steps, sample_steps)
         image_seq_len = latents.shape[1]
 
-        if not self.is_layered:
-            mu = qwen_image_utils.calculate_shift_qwen_image(image_seq_len)
-        else:
-            base_seqlen = 256 * 256 / 16 / 16
-            mu = (image_seq_len / base_seqlen) ** 0.5
+        mu = qwen_image_utils.calculate_shift_qwen_image(image_seq_len)
         scheduler = qwen_image_utils.get_scheduler(discrete_flow_shift)
         # mu is kwarg for FlowMatchingDiscreteScheduler
         timesteps, n = qwen_image_utils.retrieve_timesteps(scheduler, sample_steps, device, sigmas=sigmas, mu=mu)
@@ -295,7 +149,6 @@ class QwenImageNetworkTrainer(NetworkTrainer):
 
         # 6. Denoising loop
         do_cfg = do_classifier_free_guidance and cfg_scale > 1.0
-        is_rgb = None if not args.is_layered else torch.zeros(latents.shape[0], dtype=torch.long, device=device)  # batch size 1
         scheduler.set_begin_index(0)
         # with progress_bar(total=sample_steps) as pbar:
 
@@ -304,8 +157,6 @@ class QwenImageNetworkTrainer(NetworkTrainer):
                 timestep = t.expand(latents.shape[0]).to(latents.dtype)
 
                 latent_model_input = latents
-                if is_edit or args.is_layered:
-                    latent_model_input = torch.cat([latents, control_latent], dim=1)
 
                 with torch.no_grad():
                     noise_pred = model(
@@ -316,10 +167,7 @@ class QwenImageNetworkTrainer(NetworkTrainer):
                         encoder_hidden_states=vl_embed,
                         img_shapes=img_shapes,
                         txt_seq_lens=txt_seq_lens,
-                        additional_t_cond=is_rgb,
                     )
-                    if is_edit or args.is_layered:
-                        noise_pred = noise_pred[:, :image_seq_len]
 
                 if do_cfg:
                     with torch.no_grad():
@@ -331,10 +179,7 @@ class QwenImageNetworkTrainer(NetworkTrainer):
                             encoder_hidden_states=negative_vl_embed,
                             img_shapes=img_shapes,
                             txt_seq_lens=negative_txt_seq_lens,
-                            additional_t_cond=is_rgb,
                         )
-                    if is_edit or args.is_layered:
-                        neg_noise_pred = neg_noise_pred[:, :image_seq_len]
                     comb_pred = neg_noise_pred + cfg_scale * (noise_pred - neg_noise_pred)
 
                     cond_norm = torch.norm(noise_pred, dim=-1, keepdim=True)
@@ -347,17 +192,15 @@ class QwenImageNetworkTrainer(NetworkTrainer):
                 if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % scheduler.order == 0):
                     pbar.update()
 
-        # BLCHW for layered with num_layers > 0, or BC1HW for non-layered (backward compatibility) or layered with num_layers=0
-        latents = qwen_image_utils.unpack_latents(latents, height, width, is_layered=args.is_layered)
+        # Original image latents use the singleton image axis: B, C, 1, H, W.
+        latents = qwen_image_utils.unpack_latents(latents, height, width)
 
         # Move VAE to the appropriate device for sampling
         vae.to(device)
         vae.eval()
 
-        # Decode latents to video
-        logger.info(f"Decoding video from latents: {latents.shape}")
-        if latents.shape[2] != 1:  # 1 L C H W
-            latents = latents.permute(1, 2, 0, 3, 4)  # 1 L C H W -> L C 1 H W
+        # Decode latents to an image
+        logger.info(f"Decoding image from latents: {latents.shape}")
         pixels_list = []
         with torch.no_grad():
             for i in range(latents.shape[0]):
@@ -374,15 +217,14 @@ class QwenImageNetworkTrainer(NetworkTrainer):
         vae.to("cpu")
         clean_memory_on_device(device)
 
-        pixels = pixels.unsqueeze(2)  # add a dummy dimension for video frames, L C H W -> L C 1 H W
+        pixels = pixels.unsqueeze(2)  # restore the original singleton image axis: B C H W -> B C 1 H W
         return pixels
 
     def load_vae(self, args: argparse.Namespace, vae_dtype: torch.dtype, vae_path: str):
         vae_path = args.vae
 
         logger.info(f"Loading VAE model from {vae_path}")
-        input_channels = 4 if args.is_layered else 3
-        vae = qwen_image_utils.load_vae(args.vae, input_channels=input_channels, device="cpu", disable_mmap=True)
+        vae = qwen_image_utils.load_vae(args.vae, device="cpu", disable_mmap=True)
         vae.eval()
         return vae
 
@@ -396,18 +238,11 @@ class QwenImageNetworkTrainer(NetworkTrainer):
         loading_device: str,
         dit_weight_dtype: Optional[torch.dtype],
     ):
-        if self.is_edit and "edit" not in dit_path or not self.is_edit and "edit" in dit_path:
-            logger.warning(
-                f"The provided DiT model {dit_path} may not match the training mode {'edit' if self.is_edit else 'text-to-image'}"
-            )
         model = qwen_image_model.load_qwen_image_model(
             accelerator.device,
             dit_path,
             attn_mode,
             split_attn,
-            args.model_version == "edit-2511",
-            args.is_layered,
-            args.is_layered,
             loading_device,
             dit_weight_dtype,
             args.fp8_scaled,
@@ -439,75 +274,17 @@ class QwenImageNetworkTrainer(NetworkTrainer):
         **kwargs,
     ) -> DiTOutput:
         model: qwen_image_model.QwenImageTransformer2DModel = transformer
-        is_edit = self.is_edit
 
         bsize = latents.shape[0]
-        latents = batch["latents"]  # B, C, 1, H, W for non-layered, B, C, L, H, W for layered
-        if args.is_layered:
-            if latents.shape[2] < 2:
-                raise ValueError(
-                    f"Expected latents shape B, C, L, H, W with L >= 2 for layered model, "
-                    f"but got shape {latents.shape} (L={latents.shape[2]!r})."
-                )
-            num_layers = latents.shape[2] - 1  # 1st latent is base, rest are layers
-            latents = latents.permute(0, 2, 1, 3, 4)  # B, L, C, H, W
-            noise = noise.permute(0, 2, 1, 3, 4)  # B, L, C, H, W
-            noisy_model_input = noisy_model_input.permute(0, 2, 1, 3, 4)  # B, L, C, H, W
-
-            # remove 1st target image from noisy_model_input
-            if args.remove_first_image_from_target:
-                num_layers -= 1  # remove 1 layer
-                noisy_model_input = noisy_model_input[:, 1:, :, :, :]  # B, L-1, C, H, W
-        else:
-            assert latents.shape[2] == 1, "Expected latents shape B, C, 1, H, W for non-layered model"
-            num_layers = 0
+        latents = batch["latents"]  # B, C, 1, H, W
+        assert latents.shape[2] == 1, "Expected latents shape B, C, 1, H, W for the original image model"
 
         # pack latents
         lat_h = latents.shape[3]
         lat_w = latents.shape[4]
         noisy_model_input = qwen_image_utils.pack_latents(noisy_model_input)
-        img_seq_len = noisy_model_input.shape[1]
 
         # control
-        num_control_images = 0
-        if is_edit:
-            while True:
-                key = f"latents_control_{num_control_images}"
-                if key in batch:
-                    num_control_images += 1
-                else:
-                    break
-            if num_control_images == 0:
-                is_edit = False  # no control images found, treat as text-to-image
-
-        if is_edit:
-            latents_control = []
-            latents_control_shapes = []
-            for i in range(num_control_images):
-                key = f"latents_control_{i}"
-                lc = batch[key]  # B, C, F, H, W. F=1
-                latents_control_shapes.append(lc.shape)
-                lc = qwen_image_utils.pack_latents(lc)  # B, H*W, C. H*W is the sequence length L
-                latents_control.append(lc)
-            latents_control = torch.cat(latents_control, dim=1)  # B, L, C. L is the total sequence length of all control images
-
-            noisy_model_input = torch.cat([noisy_model_input, latents_control], dim=1)  # B, L+Lc, C
-        elif args.is_layered:
-            # use 1st target image as control
-            num_control_images = 1
-            latents_control = latents[:, 0:1]  # B, 1, C, H, W
-            latents_control = latents_control.transpose(1, 2)  # B, C, 1, H, W, to match with Edit model
-            latents_control_shapes = [latents_control.shape]
-            latents_control = qwen_image_utils.pack_latents(latents_control)  # B, H*W, C
-            noisy_model_input = torch.cat([noisy_model_input, latents_control], dim=1)  # B, L+Lc, C
-
-            # remove 1st target image from latents and noise
-            if args.remove_first_image_from_target:
-                latents = latents[:, 1:, :, :, :]  # B, L-1, C, H, W
-                noise = noise[:, 1:, :, :, :]  # B, L-1, C, H, W
-
-        else:
-            latents_control, latents_control_shapes = None, None
 
         # context
         vl_embed = batch["vl_embed"]  # list of (L, D)
@@ -538,12 +315,7 @@ class QwenImageNetworkTrainer(NetworkTrainer):
             vl_mask = vl_mask.to(device=accelerator.device)  # bool
 
         img_shapes = [(1, lat_h // 2, lat_w // 2)]
-        if args.is_layered:
-            img_shapes = img_shapes * (num_layers + 1)
-        if is_edit or args.is_layered:
-            img_shapes = [img_shapes + [(1, sh[-2] // 2, sh[-1] // 2) for sh in latents_control_shapes]]
-        else:
-            img_shapes = [img_shapes]  # make it a list of list for consistency
+        img_shapes = [img_shapes]  # make it a list of list for consistency
 
         # print(
         #     f"noisy_model_input: {noisy_model_input.shape}, vl_embed: {vl_embed.shape}, vl_mask: {vl_mask.shape if vl_mask is not None else None}, img_shapes: {img_shapes}, txt_seq_lens: {txt_seq_lens}"
@@ -551,9 +323,6 @@ class QwenImageNetworkTrainer(NetworkTrainer):
 
         guidance = None
         timesteps = timesteps / 1000.0
-        is_rgb = (
-            None if not args.is_layered else torch.zeros(latents.shape[0], dtype=torch.long, device=accelerator.device)
-        )  # batch size bsize
         with accelerator.autocast():
             model_pred = model(
                 hidden_states=noisy_model_input,
@@ -563,10 +332,7 @@ class QwenImageNetworkTrainer(NetworkTrainer):
                 encoder_hidden_states=vl_embed,
                 img_shapes=img_shapes,
                 txt_seq_lens=txt_seq_lens,
-                additional_t_cond=is_rgb,
             )
-            if is_edit or args.is_layered:
-                model_pred = model_pred[:, :img_seq_len]
 
         # unpack latents
         model_pred = qwen_image_utils.unpack_latents(
@@ -574,7 +340,6 @@ class QwenImageNetworkTrainer(NetworkTrainer):
             lat_h * qwen_image_utils.VAE_SCALE_FACTOR,
             lat_w * qwen_image_utils.VAE_SCALE_FACTOR,
             qwen_image_utils.VAE_SCALE_FACTOR,
-            is_layered=args.is_layered,
         )
 
         # flow matching loss
@@ -593,13 +358,386 @@ def qwen_image_setup_parser(parser: argparse.ArgumentParser) -> argparse.Argumen
     parser.add_argument("--text_encoder", type=str, default=None, help="text encoder (Qwen2.5-VL) checkpoint path")
     parser.add_argument("--fp8_vl", action="store_true", help="use fp8 for Text Encoder model")
     parser.add_argument("--num_layers", type=int, default=None, help="Number of layers in the DiT model, default is None (60)")
-    parser.add_argument(
-        "--remove_first_image_from_target",
-        action="store_true",
-        help="Remove the first image from the target images for layered model. / レイヤードモデルでターゲット画像から最初の画像を削除する。",
-    )
     qwen_image_utils.add_model_version_args(parser)
     return parser
+
+
+def validate_training_args(args):
+    """Validate original-image consumers before any model or tracker is initialized."""
+    source = getattr(args, "_config_source", "CLI")
+
+    def fail(key, reason):
+        raise ValueError(f"{source}: {key}: {reason}; correct this setting before training")
+
+    def require_package(key, package):
+        if importlib.util.find_spec(package) is None:
+            fail(key, f"requires installed {package}; install the selected prerequisite or choose another supported option")
+
+    def pairs(key, literal=False):
+        result = {}
+        for item in getattr(args, key) or []:
+            if item.count("=") != 1:
+                fail(key, f"expected key=value, got {item!r}")
+            name, value = item.split("=")
+            if not name.isidentifier() or not value:
+                fail(key, f"malformed argument {item!r}")
+            if literal:
+                try:
+                    value = ast.literal_eval(value)
+                except (ValueError, SyntaxError):
+                    fail(key, f"{name} needs a Python literal value")
+            result[name] = value
+        return result
+
+    if args.network_module is None:
+        fail("network_module", "select networks.lora_qwen_image, networks.loha or networks.lokr")
+    if args.fp8_scaled and not args.fp8_base:
+        fail("fp8_scaled", "requires fp8_base=true")
+    if args.sage_attn:
+        fail("sage_attn", "unsupported for training; use sdpa, flash_attn or xformers")
+    backend = (
+        "sdpa"
+        if args.sdpa
+        else "flash_attn"
+        if args.flash_attn
+        else "xformers"
+        if args.xformers
+        else "flash3"
+        if args.flash3
+        else None
+    )
+    if backend is None:
+        fail("attention", "select sdpa, flash_attn or xformers")
+    if backend == "flash3":
+        fail("flash3", "unsupported by Qwen-Image; select sdpa, flash_attn or xformers")
+    if backend in ("flash_attn", "xformers"):
+        require_package(backend, backend)
+        from musubi_tuner.qwen_image import qwen_image_modules
+
+        available = qwen_image_modules.flash_attn_func if backend == "flash_attn" else qwen_image_modules.xops
+        if available is None:
+            fail(backend, "the selected backend could not be imported; use a compatible installation or SDPA")
+    if args.persistent_data_loader_workers and min(args.max_data_loader_n_workers, os.cpu_count() or 1) == 0:
+        fail("persistent_data_loader_workers", "requires nonzero max_data_loader_n_workers; otherwise disable persistence")
+    positive = (
+        "max_train_steps",
+        "max_train_epochs",
+        "gradient_accumulation_steps",
+        "network_dim",
+        "num_layers",
+        "sample_every_n_steps",
+        "sample_every_n_epochs",
+        "save_every_n_steps",
+        "save_every_n_epochs",
+        "num_timestep_buckets",
+        "block_swap_ring_size",
+        "ddp_timeout",
+    )
+    nonnegative = (
+        "max_data_loader_n_workers",
+        "blocks_to_swap",
+        "learning_rate",
+        "network_alpha",
+        "max_grad_norm",
+        "save_last_n_steps",
+        "save_last_n_epochs",
+        "save_last_n_steps_state",
+        "save_last_n_epochs_state",
+        "scale_weight_norms",
+    )
+    for key in positive + nonnegative:
+        value = getattr(args, key)
+        if key == "max_train_steps" and args.max_train_epochs is not None:
+            continue  # validated after the existing epoch-derived count becomes available
+        if value is not None and (value <= 0 if key in positive else value < 0):
+            fail(key, "must be positive" if key in positive else "must be nonnegative (zero disables where documented)")
+    if args.network_dropout is not None and not 0 <= args.network_dropout <= 1:
+        fail("network_dropout", "must be between 0 and 1")
+    if (args.blocks_to_swap or 0) > (args.num_layers or 60) - 1:
+        fail("blocks_to_swap", f"cannot exceed {(args.num_layers or 60) - 1} for the configured model")
+    if args.blocks_to_swap and args.block_swap_h2d_only and not args.gradient_checkpointing:
+        fail(
+            "block_swap_h2d_only",
+            f"blocks_to_swap={args.blocks_to_swap} with H2D-only swapping requires gradient_checkpointing=true "
+            "to re-read reused weights for backward; enable it, disable block_swap_h2d_only or set blocks_to_swap=0",
+        )
+    if args.gradient_checkpointing_cpu_offload and not args.gradient_checkpointing:
+        fail("gradient_checkpointing_cpu_offload", "requires gradient_checkpointing")
+    if args.dim_from_weights and not args.network_weights:
+        fail("dim_from_weights", "requires network_weights")
+    for key in ("min_timestep", "max_timestep"):
+        value = getattr(args, key)
+        if value is not None and not 0 <= value <= 1000:
+            fail(key, "must be within 0..1000")
+    if args.min_timestep is not None and args.max_timestep is not None and args.min_timestep >= args.max_timestep:
+        fail("min_timestep", "must be less than max_timestep")
+    if args.discrete_flow_shift <= 0:
+        fail("discrete_flow_shift", "must be positive")
+    if args.logit_std < 0 and (
+        args.timestep_sampling in ("logsnr", "qinglong_flux")
+        or (args.timestep_sampling == "sigma" and args.weighting_scheme == "logit_normal")
+    ):
+        fail("logit_std", "the selected timestep distribution requires a nonnegative standard deviation")
+    if args.vae_dtype is not None:
+        try:
+            model_utils.str_to_dtype(args.vae_dtype)
+        except (ValueError, KeyError):
+            fail("vae_dtype", "unknown dtype; supply a supported floating precision")
+    network = pairs("network_args")
+    allowed = {
+        "conv_dim",
+        "conv_alpha",
+        "rank_dropout",
+        "module_dropout",
+        "verbose",
+        "exclude_patterns",
+        "include_patterns",
+        "loraplus_lr_ratio",
+    }
+    if args.network_module.endswith(".lokr"):
+        allowed.add("factor")
+    for key, value in network.items():
+        if key not in allowed:
+            fail("network_args", f"unsupported {key}; correct the name for the selected adapter factory")
+        try:
+            if key.endswith("patterns"):
+                patterns = ast.literal_eval(value)
+                if not isinstance(patterns, list) or any(not isinstance(pattern, str) for pattern in patterns):
+                    raise ValueError("expected a list of regex strings")
+                for pattern in patterns:
+                    re.compile(pattern)
+            elif key in ("rank_dropout", "module_dropout"):
+                number = float(value)
+                if not 0 <= number < 1:
+                    raise ValueError("expected 0 <= dropout < 1")
+            elif key == "conv_dim":
+                if int(value) < 0:
+                    raise ValueError("expected nonnegative integer (0 disables)")
+            elif key == "factor":
+                if int(value) != -1 and int(value) <= 0:
+                    raise ValueError("expected -1 or positive integer")
+            elif key != "verbose":
+                number = float(value)
+                if not math.isfinite(number) or number < 0:
+                    raise ValueError("expected a finite nonnegative number")
+        except (ValueError, SyntaxError, TypeError, re.error) as error:
+            fail("network_args", f"{key}: {error}")
+    optimizer_args = pairs("optimizer_args", literal=True)
+    scheduler_args = pairs("lr_scheduler_args", literal=True)
+    optimizer_name = args.optimizer_type
+    if optimizer_name.lower() == "adamw8bit":
+        require_package("optimizer_type", "bitsandbytes")
+        optimizer_class = importlib.import_module("bitsandbytes.optim").AdamW8bit
+    elif optimizer_name.lower() == "adafactor":
+        optimizer_class = importlib.import_module("transformers.optimization").Adafactor
+    elif optimizer_name.lower() == "adamw":
+        optimizer_class = torch.optim.AdamW
+    else:
+        module, _, name = optimizer_name.rpartition(".")
+        try:
+            optimizer_class = getattr(importlib.import_module(module) if module else torch.optim, name)
+        except (ImportError, AttributeError) as error:
+            fail("optimizer_type", f"cannot resolve {optimizer_name}: {error}")
+    try:
+        bound = inspect.signature(optimizer_class).bind(params=[], lr=args.learning_rate, **optimizer_args)
+    except TypeError as error:
+        fail("optimizer_args", str(error))
+    if optimizer_class is torch.optim.AdamW or optimizer_name.lower() == "adamw8bit":
+        bound.apply_defaults()
+        try:
+            betas = bound.arguments["betas"]
+            if len(betas) != 2 or any(not 0 <= beta < 1 for beta in betas):
+                fail("optimizer_args", "betas must contain two values within [0, 1)")
+            for key in ("eps", "weight_decay"):
+                if not bound.arguments[key] >= 0:
+                    fail("optimizer_args", f"{key} must be nonnegative")
+        except TypeError as error:
+            fail("optimizer_args", f"invalid AdamW betas/eps/weight_decay: {error}")
+    elif optimizer_class is torch.optim.SGD:
+        try:
+            if bound.arguments.get("momentum", 0) < 0:
+                fail("optimizer_args", "SGD momentum must be nonnegative; set momentum=0 to disable it")
+        except TypeError as error:
+            fail("optimizer_args", f"invalid SGD momentum: {error}; supply a nonnegative number")
+    if args.lr_scheduler_type and not optimizer_name.lower().endswith("schedulefree"):
+        module, _, name = args.lr_scheduler_type.rpartition(".")
+        try:
+            scheduler_class = getattr(importlib.import_module(module) if module else torch.optim.lr_scheduler, name)
+            inspect.signature(scheduler_class).bind(optimizer=None, **scheduler_args)
+        except (ImportError, AttributeError, TypeError) as error:
+            fail("lr_scheduler_type/lr_scheduler_args", str(error))
+    if (
+        not args.lr_scheduler_type
+        and not optimizer_name.lower().endswith("schedulefree")
+        and args.lr_scheduler.startswith("adafactor:")
+        and optimizer_class is not importlib.import_module("transformers.optimization").Adafactor
+    ):
+        fail("lr_scheduler", "the adafactor schedule requires the Adafactor optimizer; select it or another schedule")
+    validate_scheduler_args(args)
+    if args.log_with in ("tensorboard", "all") and not args.logging_dir:
+        fail("logging_dir", "required by the selected logging backend")
+    if args.log_with in ("tensorboard", "all") or (args.log_with is None and args.logging_dir):
+        require_package("log_with", "tensorboard")
+    if args.log_with in ("wandb", "all"):
+        require_package("log_with", "wandb")
+    if args.compile:
+        from torch._dynamo.backends.registry import lookup_backend
+        from torch._dynamo.exc import InvalidBackend
+
+        try:
+            lookup_backend(args.compile_backend)
+        except InvalidBackend as error:
+            fail("compile_backend", f"{error}; select an available backend or disable compile")
+        if args.compile_backend == "inductor":
+            require_package("compile", "triton")
+    if args.log_tracker_config is not None:
+        try:
+            toml.load(args.log_tracker_config)
+        except (OSError, ValueError) as error:
+            fail("log_tracker_config", f"cannot read tracker TOML {args.log_tracker_config!r}: {error}; supply a valid file")
+    used = ["dataset_config", "dit"]
+    if args.sample_prompts:
+        used += ["sample_prompts", "vae", "text_encoder"]
+    for key in used + ["network_weights"]:
+        value = getattr(args, key)
+        if not value and key == "network_weights":
+            continue
+        if not value or not Path(value).is_file():
+            fail(key, f"missing input file {value!r}; supply an existing path relative to process CWD")
+    for value in args.base_weights or []:
+        if not Path(value).is_file():
+            fail("base_weights", f"missing input file {value!r}")
+    if args.resume and not args.resume_from_huggingface and not Path(args.resume).is_dir():
+        fail("resume", f"missing Accelerate state directory {args.resume!r}")
+    if not args.output_dir or not args.output_name:
+        fail("output_dir/output_name", "both are required; output directories may be new")
+    output = Path(args.output_dir)
+    for path in (output, *output.parents):
+        if path.exists() and not path.is_dir():
+            fail("output_dir", f"{path} is a file; supply a directory path whose existing parents are directories")
+    if args.sample_prompts:
+        load_prompts(args.sample_prompts)
+
+
+def validate_scheduler_args(args, num_training_steps=None):
+    """Check only settings consumed by the selected scheduler; never change their meaning."""
+    source = getattr(args, "_config_source", "CLI")
+
+    def fail(key, reason):
+        raise ValueError(f"{source}: {key}: {reason}; correct the scheduler settings")
+
+    if args.optimizer_type.lower().endswith("schedulefree") or args.lr_scheduler_type:
+        return
+    name = "rex" if args.lr_scheduler.lower() == "rex" else args.lr_scheduler
+    optimizer_kwargs = dict(item.split("=", 1) for item in args.optimizer_args or [])
+    if args.optimizer_type.lower() == "adafactor":
+        relative = ast.literal_eval(optimizer_kwargs.get("relative_step", "True"))
+        warmup_init = ast.literal_eval(optimizer_kwargs.get("warmup_init", "False"))
+        if relative or warmup_init:
+            name = "adafactor:" + str(args.learning_rate)
+    from transformers.optimization import SchedulerType
+
+    if name not in {x.value for x in SchedulerType} | {"rex", "piecewise_constant"} and not name.startswith("adafactor:"):
+        fail("lr_scheduler", f"unsupported {name!r}; choose an existing scheduler or lr_scheduler_type")
+    kwargs = {}
+    for item in args.lr_scheduler_args or []:
+        try:
+            key, value = item.split("=")
+            kwargs[key] = ast.literal_eval(value)
+        except (ValueError, SyntaxError):
+            fail("lr_scheduler_args", f"malformed {item!r}; use key=literal")
+    if name.startswith("adafactor:"):
+        try:
+            float(name.split(":", 1)[1])
+        except ValueError:
+            fail("lr_scheduler", "use adafactor:<initial learning rate>")
+        if kwargs:
+            fail("lr_scheduler_args", "the Adafactor schedule does not consume additional arguments")
+    else:
+        if name == "rex":
+            from musubi_tuner.modules.lr_schedulers import RexLR
+
+            schedule_func = RexLR
+            consumed = {"max_lr", "min_lr", "num_steps", "num_warmup_steps"}
+        elif name == "piecewise_constant":
+            from diffusers.optimization import TYPE_TO_SCHEDULER_FUNCTION, SchedulerType as Kind
+
+            schedule_func = TYPE_TO_SCHEDULER_FUNCTION[Kind(name)]
+            consumed = set()
+        else:
+            from transformers.optimization import TYPE_TO_SCHEDULER_FUNCTION
+
+            schedule_func = TYPE_TO_SCHEDULER_FUNCTION[SchedulerType(name)]
+            consumed = set() if name == "constant" else {"num_warmup_steps"}
+            if name not in ("constant", "constant_with_warmup", "inverse_sqrt"):
+                consumed.add("num_training_steps")
+            if name in ("cosine_with_restarts", "cosine_with_min_lr", "warmup_stable_decay"):
+                consumed.add("num_cycles")
+            if name == "polynomial":
+                consumed.add("power")
+            if name == "inverse_sqrt":
+                consumed.add("timescale")
+            if name == "cosine_with_min_lr":
+                consumed.add("min_lr_rate")
+            if name == "warmup_stable_decay":
+                consumed = {"num_warmup_steps", "num_stable_steps", "num_decay_steps", "num_cycles", "min_lr_ratio"}
+        if consumed & kwargs.keys():
+            fail(
+                "lr_scheduler_args",
+                f"duplicate derived arguments {sorted(consumed & kwargs.keys())}; use the dedicated scheduler options",
+            )
+        try:
+            bound = inspect.signature(schedule_func).bind(optimizer=None, **dict.fromkeys(consumed), **kwargs)
+            bound.apply_defaults()
+            if name == "polynomial" and not args.learning_rate > bound.arguments["lr_end"]:
+                fail(
+                    "learning_rate/lr_scheduler_args",
+                    f"polynomial requires learning_rate={args.learning_rate} > lr_end={bound.arguments['lr_end']}; "
+                    "increase learning_rate or lower lr_end",
+                )
+            if name == "cosine_with_min_lr" and args.lr_scheduler_min_lr_ratio is None and bound.arguments["min_lr"] is None:
+                fail(
+                    "lr_scheduler_min_lr_ratio/lr_scheduler_args",
+                    "cosine_with_min_lr requires a minimum; set lr_scheduler_min_lr_ratio or min_lr in lr_scheduler_args",
+                )
+            if name == "inverse_sqrt" and args.lr_scheduler_timescale is not None and args.lr_scheduler_timescale <= 0:
+                fail("lr_scheduler_timescale", "inverse_sqrt divides by the timescale; use a positive value or omit it")
+            if name == "warmup_stable_decay" and bound.arguments["decay_type"] not in ("linear", "cosine", "1-sqrt"):
+                fail(
+                    "lr_scheduler_args",
+                    f"unsupported decay_type={bound.arguments['decay_type']!r}; use 'linear', 'cosine' or '1-sqrt'",
+                )
+        except TypeError as error:
+            fail("lr_scheduler_args", str(error))
+    if name == "piecewise_constant":
+        try:
+            rules = kwargs["step_rules"].split(",")
+            for rule in rules[:-1]:
+                multiplier, step = rule.split(":")
+                float(multiplier)
+                int(step)
+            float(rules[-1])
+        except (AttributeError, TypeError, ValueError) as error:
+            fail("lr_scheduler_args", f"invalid step_rules: {error}; use multipliers and integer steps, e.g. '1:10,0.5'")
+        return
+    if name == "constant" or name.startswith("adafactor:"):
+        if args.lr_warmup_steps != 0:
+            fail("lr_warmup_steps", f"{name} requires zero warmup; set 0 or use constant_with_warmup")
+        return
+    keys = ["lr_warmup_steps"]
+    if name == "warmup_stable_decay":
+        keys.append("lr_decay_steps")
+    for key in keys:
+        value = getattr(args, key)
+        if value is None or value < 0 or (isinstance(value, float) and value > 1):
+            fail(key, "use nonnegative integer steps or a floating ratio within 0..1; 200.0 is a ratio, not 200 steps")
+    if num_training_steps is not None and name == "warmup_stable_decay":
+        counts = [
+            int(getattr(args, key) * num_training_steps) if isinstance(getattr(args, key), float) else getattr(args, key)
+            for key in keys
+        ]
+        if sum(counts) > num_training_steps:
+            fail("lr_decay_steps", "warmup plus decay exceeds the derived total steps")
 
 
 def main():

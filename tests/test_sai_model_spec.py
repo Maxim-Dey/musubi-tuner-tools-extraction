@@ -1,34 +1,37 @@
-import unittest
+"""Metadata consumed by saved Qwen adapters."""
 
-from musubi_tuner.dataset.architectures import ARCHITECTURE_IDEOGRAM4, ARCHITECTURE_MINIMAX_H3
+import pytest
+from musubi_tuner.dataset.architectures import ARCHITECTURE_QWEN_IMAGE
 from musubi_tuner.utils import sai_model_spec
 
 
-class SaiModelSpecTest(unittest.TestCase):
-    def test_build_metadata_supports_ideogram4_lora(self):
-        metadata = sai_model_spec.build_metadata(
-            None,
-            ARCHITECTURE_IDEOGRAM4,
-            0,
-            title="ideogram4_lora_test",
-        )
-
-        self.assertEqual(metadata["modelspec.architecture"], "Ideogram-4/lora")
-        self.assertEqual(metadata["modelspec.implementation"], "https://huggingface.co/Comfy-Org/Ideogram-4")
-        self.assertEqual(metadata["modelspec.resolution"], "1024x1024")
-
-    def test_build_metadata_supports_minimax_h3_lora(self):
-        metadata = sai_model_spec.build_metadata(
-            None,
-            ARCHITECTURE_MINIMAX_H3,
-            0,
-            title="minimax_h3_lora_test",
-        )
-
-        self.assertEqual(metadata["modelspec.architecture"], "MiniMax-H3/lora")
-        self.assertEqual(metadata["modelspec.implementation"], "https://huggingface.co/MiniMaxAI/MiniMax-H3")
-        self.assertEqual(metadata["modelspec.resolution"], "1280x720")
+def test_qwen_adapter_metadata():
+    metadata = sai_model_spec.build_metadata(None, ARCHITECTURE_QWEN_IMAGE, 0, title="qwen_lora_test")
+    assert metadata["modelspec.architecture"] == "Qwen-Image/lora"
+    assert metadata["modelspec.implementation"] == "https://github.com/QwenLM/Qwen-Image"
+    assert metadata["modelspec.resolution"] == "1328x1328"
+    assert metadata["modelspec.title"] == "qwen_lora_test"
+    assert all(isinstance(value, str) for value in metadata.values())
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_qwen_metadata_overrides_and_timestep_range():
+    metadata = sai_model_spec.build_metadata(
+        None,
+        ARCHITECTURE_QWEN_IMAGE,
+        0,
+        custom_arch="custom-qwen",
+        reso="512,768",
+        timesteps=(100, 900),
+        author="fixture",
+        tags="test",
+    )
+    assert metadata["modelspec.architecture"] == "custom-qwen/lora"
+    assert metadata["modelspec.resolution"] == "512x768"
+    assert metadata["modelspec.timestep_range"] == "100,900"
+    assert metadata["modelspec.author"] == "fixture"
+    assert metadata["modelspec.tags"] == "test"
+
+
+def test_foreign_metadata_is_rejected():
+    with pytest.raises(ValueError, match="Unsupported architecture"):
+        sai_model_spec.build_metadata(None, "wan", 0)

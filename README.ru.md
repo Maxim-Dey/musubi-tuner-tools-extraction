@@ -1,316 +1,72 @@
-# Musubi Tuner
+# Musubi Tuner — адаптеры Qwen-Image original
 
-[English](./README.md) | [日本語](./README.ja.md) | [Русский](./README.ru.md)
+[English](README.md) · [日本語](README.ja.md)
 
-## Содержание
+Сохранён один процесс: изображения с подписями → кэш latent → кэш текстовых эмбеддингов → обучение LoRA/LoHa/LoKr исходной Qwen-Image. Работают контрольные PNG во время обучения, логирование, сохранение адаптеров/состояния и resume. Существующий алгоритм обучения сохранён. Другие архитектуры, Edit/Layered, видео/аудио/control, полное обучение модели, отдельная генерация/подписи/конвертация и GUI удалены.
 
-<details>
-<summary>Нажмите, чтобы развернуть</summary>
+## Среда и подготовка
 
-- [Musubi Tuner](#musubi-tuner)
-  - [Содержание](#содержание)
-  - [Введение](#введение)
-    - [Спонсоры](#спонсоры)
-    - [Поддержать проект](#поддержать-проект)
-    - [Недавние обновления](#недавние-обновления)
-    - [Релизы](#релизы)
-    - [Для разработчиков, использующих ИИ-агенты](#для-разработчиков-использующих-ии-агенты)
-  - [Обзор](#обзор)
-    - [Требования к оборудованию](#требования-к-оборудованию)
-    - [Возможности](#возможности)
-    - [Документация](#документация)
-  - [Установка](#установка)
-    - [Установка через pip](#установка-через-pip)
-    - [Установка через uv](#установка-через-uv-экспериментально)
-    - [Linux/MacOS](#linuxmacos)
-    - [Windows](#windows)
-  - [Загрузка моделей](#загрузка-моделей)
-  - [Использование](#использование)
-    - [Настройка датасета](#настройка-датасета)
-    - [Предварительное кэширование и обучение](#предварительное-кэширование)
-    - [Настройка Accelerate](#настройка-accelerate)
-    - [Обучение и инференс](#обучение-и-инференс)
-  - [Прочее](#прочее)
-    - [Установка SageAttention](#установка-sageattention)
-    - [Версия PyTorch](#версия-pytorch)
-  - [Отказ от ответственности](#отказ-от-ответственности)
-  - [Участие в разработке](#участие-в-разработке)
-  - [Лицензия](#лицензия)
+Нужны Python >=3.10,<3.13 и зависимости из [pyproject.toml](pyproject.toml), включая совместимые PyTorch/torchvision. В манифесте сохранены CUDA-варианты `cu124`, `cu128`, `cu130`, `cu132`. AdamW8bit требует bitsandbytes; TensorBoard, wandb, сторонние оптимизаторы, FlashAttention/xformers и Triton для Inductor — соответствующие установленные пакеты. SDPA использует PyTorch. Конкретная модель GPU не зафиксирована.
 
-</details>
+Подготовьте исходные DiT и RGB VAE Qwen-Image, веса Qwen2.5-VL и ресурсы токенизатора `Qwen/Qwen-Image`, подпапка `tokenizer`. Вычисления DiT используют bf16; смешанная точность и точность сохранения адаптера задаются отдельно.
 
-## Введение
+Работайте из корня репозитория с установленным пакетом либо задайте `PYTHONPATH`: в PowerShell `$env:PYTHONPATH = (Join-Path (Get-Location) 'src')`, в POSIX — `export PYTHONPATH="$PWD/src"`. Все относительные пути, включая TOML/JSONL, считаются от текущей рабочей папки. Каталоги вывода, логов и кэша могут быть новыми.
 
-Этот репозиторий содержит скрипты для обучения моделей LoRA (Low-Rank Adaptation) с архитектурами HunyuanVideo, Wan2.1/2.2, FramePack, FLUX.1 Kontext, FLUX.2 dev/klein, Qwen-Image, Z-Image и MiniMax-H3.
+1. Подготовьте пары `portrait.png` + `portrait.txt` с UTF-8-подписями либо JSONL с `image_path` и `caption`.
+2. В [dataset.toml](config_for_qwen_image_lora/dataset.toml) замените внешний путь к изображениям и выберите кэш. Поддерживаются несколько датасетов и переопределения; кэши должны быть раздельными. Для JSONL каталог кэша обязателен. [Правила датасета](docs/dataset_config.md).
+3. В [train.toml](config_for_qwen_image_lora/train.toml) замените пути DiT/VAE/text и настройте вывод/логи. Две ссылки на поставляемые dataset/prompts исправлены. Комментарий H200, rank 16 и 1600 шагов — примеры. Scheduler шаблона — `constant_with_warmup`, warmup — целое 200.
+4. Замените TOK и сцены в [sample_prompts.txt](config_for_qwen_image_lora/sample_prompts.txt).
 
-Репозиторий неофициальный и не связан с официальными репозиториями этих архитектур.
+Приоритет обучения: значения по умолчанию → TOML → явно указанный CLI. Неуказанные флаги сохраняют TOML; store-true не позволяет выключить истинный параметр через отрицательный флаг. Неизвестные поля, неверные типы и запрещённые режимы отклоняются заранее. `model_version` — только `original`.
 
-*Репозиторий находится в разработке.*
+## Оба кэша и обучение
 
-### Спонсоры
-
-Мы благодарны следующим компаниям за щедрую поддержку:
-
-<a href="https://aihub.co.jp/top-en">
-  <img src="./images/logo_aihub.png" alt="AiHUB Inc." title="AiHUB Inc." height="100px">
-</a>
-
-### Поддержать проект
-
-Если проект оказался полезен, рассмотрите возможность поддержать его развитие через [GitHub Sponsors](https://github.com/sponsors/kohya-ss/). Мы очень ценим вашу поддержку!
-
-### Недавние обновления
-
-Включены GitHub Discussions: мы открыли GitHub Discussions для вопросов сообщества, обмена знаниями и технической информацией. Issues используйте для сообщений об ошибках и запросов функций, Discussions — для вопросов и обмена опытом. [Присоединиться к обсуждению →](https://github.com/kohya-ss/musubi-tuner/discussions)
-
-- 16 сентября 2026
-    - Добавлена экспериментальная поддержка MiniMax-H3 (обучение LoRA и совместная генерация видео/аудио). Большое спасибо sdbds за исходный [PR #1018](https://github.com/kohya-ss/musubi-tuner/pull/1018) и последующие правки.
-        - Подробности — в [документации](./docs/minimax_h3.md) и в [документации по обучению на одном кадре (изображение)](./docs/minimax_h3_1f.md). Список уже слитых возможностей и оставшейся работы ведётся в [roadmap поддержки MiniMax-H3](https://github.com/kohya-ss/musubi-tuner/issues/1029).
-    - Добавлена int8-квантизация ConvRot замороженных базовых весов DiT для обучения LoRA Krea 2 (`--convrot_int8`) как альтернатива `--fp8_base --fp8_scaled`. См. [PR #1008](https://github.com/kohya-ss/musubi-tuner/pull/1008).
-        - VRAM под веса уменьшается вдвое, как и при fp8. Основное преимущество — скорость на GPU без поддержки fp8 (серия RTX 30 и старше). Для fused-ядер требуется `triton`. Подробности — в [документации Krea 2](./docs/krea2.md#convrot-int8--convrot-int8).
-    - Изменения в конфигурации датасета для файлов метаданных JSONL. Подробности — в [документации по настройке датасета](./docs/dataset_config.md).
-        - Относительные пути в JSONL теперь также разрешаются относительно каталога с JSONL-файлом, если они не найдены относительно рабочей директории. [PR #1023](https://github.com/kohya-ss/musubi-tuner/pull/1023)
-        - Записи видео могут содержать необязательное поле `audio_path` для архитектур с поддержкой аудио (сейчас MiniMax-H3); если поле опущено, используется sidecar-файл аудио с тем же именем или встроенная аудиодорожка. [PR #1020](https://github.com/kohya-ss/musubi-tuner/pull/1020), [PR #1021](https://github.com/kohya-ss/musubi-tuner/pull/1021)
-        - Ключи вне общей схемы передаются в architecture-specific скрипты кэширования как дополнительные поля элемента. [PR #1094](https://github.com/kohya-ss/musubi-tuner/pull/1094)
-    - Исправлена ошибка `--attn_mode sdpa` в общих attention-бэкендах; теперь это псевдоним `torch`. Спасибо rossnot [PR #1092](https://github.com/kohya-ss/musubi-tuner/pull/1092).
-    - Исправлено игнорирование `enable_bucket` и `bucket_no_upscale` видеодатасетами при кэшировании латентов; путь кэширования видео всегда применял бакетинг независимо от настройки. Спасибо christopher5106 [PR #1100](https://github.com/kohya-ss/musubi-tuner/pull/1100).
-        - **Изменение поведения:** видеодатасеты без `enable_bucket = true` теперь кэшируются в единственном заданном `resolution` (ресайз и центральный кроп), как это всегда было для изображений. Если вы полагались на бакетинг, не задавая его, добавьте `enable_bucket = true` в датасет. Иначе повторно запустите кэширование латентов (и кэширование выхода текстового энкодера для MiniMax-H3 `fl2va` / `ref2va`, чьи кэши содержат изменённые control-изображения), чтобы кэши соответствовали заданному разрешению.
-    - Скрипты обучения теперь останавливаются при старте, если отсутствуют `--output_dir` или `--output_name`, вместо падения при первом сохранении. Спасибо rossnot [PR #1070](https://github.com/kohya-ss/musubi-tuner/pull/1070).
-    - Krea 2: теперь учитывается `--gradient_checkpointing_cpu_offload` (offload активаций на CPU при gradient checkpointing). Спасибо rockerBOO [PR #1101](https://github.com/kohya-ss/musubi-tuner/pull/1101).
-    - Krea 2: добавлен `--turbo_lora` для наложения Turbo LoRA поверх RAW-модели при генерации сэмплов во время обучения, как альтернатива `--turbo_dit`. Можно сочетать с block swap, fp8 и ConvRot int8. Подробности — в [документации Krea 2](./docs/krea2.md#sample-image-generation-during-training--学習中のサンプル画像生成). Спасибо rockerBOO [PR #1103](https://github.com/kohya-ss/musubi-tuner/pull/1103).
-
-- 14 июля 2026
-    - Добавлена опция `--log_grad_metrics` для логирования диагностики нормы градиента (`grad/norm`, `grad/mean_norm`, `grad/max`, измеряются до gradient clipping) в трекер. Спасибо rockerBOO [PR #988](https://github.com/kohya-ss/musubi-tuner/pull/988).
-        - Полезно для диагностики взрыва / затухания градиента и выбора подходящего `--max_grad_norm`. По умолчанию выключено. Подробности — в [документации по расширенной конфигурации](./docs/advanced_config.md#log-gradient-metrics--勾配メトリクスのログ出力).
-
-### Релизы
-
-Мы благодарны всем, кто вносит вклад в экосистему Musubi Tuner через документацию и сторонние инструменты. Чтобы поддержать эти вклады, рекомендуем опираться на наши [релизы](https://github.com/kohya-ss/musubi-tuner/releases) как на стабильные точки отсчёта: проект активно развивается, возможны ломающие изменения.
-
-Последний релиз и историю версий можно найти на [странице релизов](https://github.com/kohya-ss/musubi-tuner/releases).
-
-### Для разработчиков, использующих ИИ-агенты
-
-Репозиторий содержит рекомендуемые инструкции, которые помогают ИИ-агентам вроде Claude и Gemini понять контекст проекта и стандарты кода.
-
-Чтобы ими пользоваться, нужно явно включить их, создав свой конфигурационный файл в корне проекта.
-
-**Быстрая настройка:**
-
-1.  Создайте файл `CLAUDE.md`, `GEMINI.md` и/или `AGENTS.md` в корне проекта.
-2.  Добавьте в `CLAUDE.md` следующую строку, чтобы подключить рекомендуемый промпт репозитория (сейчас они почти одинаковые):
-
-    ```markdown
-    @./.ai/claude.prompt.md
-    ```
-
-    или для Gemini:
-
-    ```markdown
-    @./.ai/gemini.prompt.md
-    ```
-
-    Промпт также можно импортировать в кастомный файл агента, например `AGENTS.md`.
-
-3.  Ниже строки импорта можно добавить свои личные инструкции (например: `Always include a short summary of the change before diving into details.`).
-
-Так вы полностью контролируете инструкции агента и при этом используете общий контекст проекта. Файлы `CLAUDE.md`, `GEMINI.md` и `AGENTS.md` (а также `.mcp.json` Claude) уже указаны в `.gitignore`, поэтому они не попадут в репозиторий.
-
-## Обзор
-
-### Требования к оборудованию
-
-- VRAM: рекомендуется 12 ГБ и больше для обучения на изображениях, 24 ГБ и больше для обучения на видео
-    - *Фактические требования зависят от разрешения и настроек обучения.* Для 12 ГБ используйте разрешение 960x544 или ниже и опции экономии памяти: `--blocks_to_swap`, `--fp8_llm` и т.д.
-- Оперативная память: рекомендуется 64 ГБ и больше, возможно 32 ГБ + swap
-
-### Возможности
-
-- Реализация с экономией памяти
-- Совместимость с Windows подтверждена (совместимость с Linux подтверждена сообществом)
-- Обучение на нескольких GPU (через [Accelerate](https://huggingface.co/docs/accelerate/index)), документация будет добавлена позже
-
-### Документация
-
-Подробности по конкретным архитектурам, конфигурациям и расширенным возможностям — в документации ниже.
-
-**По архитектурам:**
-- [HunyuanVideo](./docs/hunyuan_video.md)
-- [Wan2.1/2.2](./docs/wan.md)
-- [Wan2.1/2.2 (один кадр)](./docs/wan_1f.md)
-- [FramePack](./docs/framepack.md)
-- [FramePack (один кадр)](./docs/framepack_1f.md)
-- [FLUX.1 Kontext](./docs/flux_kontext.md)
-- [Qwen-Image](./docs/qwen_image.md)
-- [Z-Image](./docs/zimage.md)
-- [HiDream-O1-Image](./docs/hidream_o1.md)
-- [HunyuanVideo 1.5](./docs/hunyuan_video_1_5.md)
-- [Kandinsky 5](./docs/kandinsky5.md)
-- [FLUX.2](./docs/flux_2.md)
-- [MiniMax-H3](./docs/minimax_h3.md)
-- [MiniMax-H3 (один кадр)](./docs/minimax_h3_1f.md)
-
-**Общая конфигурация и использование:**
-- [Настройка датасета](./docs/dataset_config.md)
-- [Расширенная конфигурация](./docs/advanced_config.md)
-- [Сэмплирование во время обучения](./docs/sampling_during_training.md)
-- [Block Swap (CPU offloading для экономии памяти)](./docs/block_swap.md)
-- [Инструменты и утилиты](./docs/tools.md)
-- [Использование torch.compile](./docs/torch_compile.md)
-
-## Установка
-
-### Установка через pip
-
-Требуется Python 3.10 или новее (проверено на 3.10).
-
-Создайте виртуальное окружение и установите PyTorch и torchvision, соответствующие вашей версии CUDA.
-
-Требуется PyTorch 2.5.1 или новее (см. [примечание](#версия-pytorch)).
+Замените `/srv/...` реальными путями и настройте Accelerate под рабочую среду. Точность launcher должна согласовываться с TOML.
 
 ```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+python qwen_image_cache_latents.py --dataset_config config_for_qwen_image_lora/dataset.toml --vae /srv/models/qwen_image_vae.safetensors --model_version original
+python qwen_image_cache_text_encoder_outputs.py --dataset_config config_for_qwen_image_lora/dataset.toml --text_encoder /srv/models/qwen_2.5_vl_7b.safetensors --model_version original
+accelerate launch --mixed_precision bf16 qwen_image_train_network.py --config_file config_for_qwen_image_lora/train.toml
 ```
 
-Установите зависимости следующей командой.
+Сохранены также три запуска через `python -m musubi_tuner.<имя_команды>`. Кэш-команды не читают `train.toml` и не принимают `--config_file`. Общие параметры: `--device`, положительный `--num_workers`, `--batch_size`, `--skip_existing`, `--keep_cache`. Batch кэширования ограничивает порцию кодирования; batch обучения задаёт датасет.
+
+`skip_existing` проверяет только наличие файлов: после изменения исходных данных/весов пересоздайте затронутые кэши. Обычная очистка удаляет устаревшие кэш-файлы выбранного датасета; `keep_cache` сохраняет их. Latent debug поддерживает `image`/`console`, текстовый кэш — `--fp8_vl`; явный `--vae_dtype` для latent-кэша не поддерживается. Отсутствующие текстовые кэши вызывают предупреждение и пропуск; пустой эффективный датасет — раннюю ошибку.
+
+## Контрольные изображения и настройки
+
+Начальный сэмпл зависит от `sample_at_first`. Дальше `sample_every_n_steps` и `sample_every_n_epochs` объединяются по OR. Интервалы положительные. Для отключения удалите prompt/schedule-параметры; указанный prompt-файл подготавливается даже без активного расписания. TXT-флаги: `--w/--h/--d/--s/--l/--fs/--n` — размеры, seed, шаги, CFG, flow shift, negative prompt. Есть TOML/JSON; отсутствующий negative prompt заменяется пробелом. PNG сохраняются в `<output_dir>/sample`. [Подробности](docs/sampling_during_training.md).
+
+`log_with`: `tensorboard`, `wandb`, `all`. TensorBoard требует `logging_dir`; один logging_dir без явно выбранного backend также включает TensorBoard. `log_grad_metrics` добавляет метрики градиентов. Сохранены metadata и настройки Hub.
+
+Имена адаптеров: `networks.lora_qwen_image`, `networks.loha`, `networks.lokr` и варианты с `musubi_tuner.`. Поддерживаются rank/alpha/dropout/patterns, начальные/базовые адаптеры, длительность, accumulation/clipping, workers, precision/FP8, checkpointing/CPU offload, block swap, compile/Dynamo, timestep/loss, оптимизаторы/scheduler, расписания, логи и Hub. См. [расширенные параметры](docs/advanced_config.md), [block swap](docs/block_swap.md), [compile](docs/torch_compile.md), [LoHa/LoKr](docs/loha_lokr.md) и `--help`.
+
+Приоритет attention: SDPA → FlashAttention → xformers → Flash3. Неиспользованные флаги не требуют пакетов; выбранный Flash3 и любой Sage отклоняются. Для padded text batch больше одного FlashAttention/xformers требуют split attention. `fp8_scaled` требует `fp8_base`, persistent workers — ненулевой workers. Целый warmup означает шаги, дробный — долю; TOML `200.0` не превращается в 200 шагов. Custom/schedule-free сохраняют прежнее поведение.
+
+## Сохранение и resume
+
+Имена адаптеров: `qwen_image_lora-step00000200.safetensors`, `qwen_image_lora-000001.safetensors`, финальный `qwen_image_lora.safetensors`. Точность задаёт `save_precision`. `save_state` сохраняет Accelerate state на предусмотренных границах и в конце; `save_state_on_train_end` отдельно включает финальное состояние. State-каталоги имеют суффикс `-state`, финальный — `qwen_image_lora-state`.
+
+`save_last_n_steps`/`save_last_n_epochs` и отдельные `save_last_n_steps_state`/`save_last_n_epochs_state` управляют хранением. Шаговое окно — число прошедших шагов, не количество файлов. Нулевое/неуказанное окно state использует окно checkpoint; исходное поведение на границах сохранено.
 
 ```bash
-pip install -e .
+accelerate launch --mixed_precision bf16 qwen_image_train_network.py --config_file config_for_qwen_image_lora/train.toml --resume qwen_image_lora/output/qwen_image_lora-step00000200-state
 ```
 
-Опционально можно использовать FlashAttention и SageAttention (**только для инференса**; инструкции — в разделе [Установка SageAttention](#установка-sageattention)).
+Восстанавливаются адаптер, optimizer, scheduler и RNG. Локальные счётчики epoch/global-step запускаются заново, уже прочитанные батчи не пропускаются. Точное продолжение позиции данных не гарантируется; учитывайте это при выборе вывода и дополнительных шагов. `--network_weights /srv/adapters/initial.safetensors` только инициализирует адаптер; `--base_weights /srv/adapters/base.safetensors` сливает базовые адаптеры до обучения. Это не resume оптимизатора.
 
-Опциональные зависимости для дополнительных функций:
-- `ascii-magic`: проверка датасета
-- `matplotlib`: визуализация timestep
-- `tensorboard`: логирование хода обучения
-- `prompt-toolkit`: интерактивное редактирование промптов в скриптах инференса Wan2.1 и FramePack. Если установлен, автоматически используется в интерактивном режиме. Особенно удобен в Linux.
+## Проверки
 
-```bash
-pip install ascii-magic matplotlib tensorboard prompt-toolkit
-```
+[Локальные результаты](specs/001-scope-qwen-image-lora/validation.md) и [quickstart](specs/001-scope-qwen-image-lora/quickstart.md) отделяют CPU-проверки импортов, reader, малых тензоров и Accelerate от эксплуатационной проверки реальной модели. GPU-производительность и полное обучение ими не подтверждаются. [Участие в разработке](CONTRIBUTING.md).
 
-### Установка через uv (экспериментально)
+## Attribution and licenses
 
-Можно установить через uv, но эта установка экспериментальная. Обратная связь приветствуется.
+Derived from [Musubi Tuner by kohya_ss](https://github.com/kohya-ss/musubi-tuner). The project uses Apache License 2.0 except where retained third-party notices specify otherwise. Some code is copied and modified from [Diffusers](https://github.com/huggingface/diffusers). Original Qwen model/VAE copyright and Apache notices credit the Qwen-Image, Wan and HuggingFace teams and remain in their source files.
 
-1. Установите uv (если его ещё нет в системе).
+The extracted attention helper derives from [HunyuanVideo](https://github.com/Tencent/HunyuanVideo), whose applicable original license remains relevant; the PNG helper comes from Musubi Tuner's Hunyuan sampling code. Block swap is based on 2kpr's implementation. LoHa/LoKr are based on [LyCORIS by KohakuBlueleaf](https://github.com/KohakuBlueleaf/LyCORIS).
 
-#### Linux/MacOS
+Historical upstream notices are retained for provenance: [HunyuanVideo 1.5](https://github.com/Tencent-Hunyuan/HunyuanVideo-1.5) followed its own license; [Wan2.1](https://github.com/Wan-Video/Wan2.1), [FramePack](https://github.com/lllyasviel/FramePack) and [comfy-kitchen](https://github.com/Comfy-Org/comfy-kitchen) code was Apache 2.0, with the latter also crediting dxqb/OneTrainer and ComfyUI-Flux2-INT8. Those standalone architecture/quantizer implementations are not part of this extraction.
 
-```sh
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
+Upstream sponsor: [AiHUB Inc.](https://aihub.co.jp/top-en)
 
-Следуйте инструкциям, чтобы вручную добавить путь к uv, пока не перезапустите сессию...
-
-#### Windows
-
-```powershell
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-Следуйте инструкциям, чтобы вручную добавить путь к uv, пока не перезагрузите систему... или просто перезагрузите систему на этом этапе.
-
-## Загрузка моделей
-
-Процедура загрузки моделей зависит от архитектуры. Инструкции — в документах по архитектурам в разделе [Документация](#документация).
-
-## Использование
-
-
-### Настройка датасета
-
-См. [здесь](./docs/dataset_config.md).
-
-### Предварительное кэширование
-
-Процедура предварительного кэширования зависит от архитектуры. Инструкции — в документах по архитектурам в разделе [Документация](#документация).
-
-### Настройка Accelerate
-
-Запустите `accelerate config`, чтобы настроить Accelerate. На каждый вопрос выберите подходящие значения для вашего окружения (введите значение напрямую или выбирайте стрелками и Enter; значение в верхнем регистре — по умолчанию, если оно подходит, просто нажмите Enter). Для обучения на одной GPU отвечайте так:
-
-```txt
-- In which compute environment are you running?: This machine
-- Which type of machine are you using?: No distributed training
-- Do you want to run your training on CPU only (even if a GPU / Apple Silicon / Ascend NPU device is available)?[yes/NO]: NO
-- Do you wish to optimize your script with torch dynamo?[yes/NO]: NO
-- Do you want to use DeepSpeed? [yes/NO]: NO
-- What GPU(s) (by id) should be used for training on this machine as a comma-seperated list? [all]: all
-- Would you like to enable numa efficiency? (Currently only supported on NVIDIA hardware). [yes/NO]: NO
-- Do you wish to use mixed precision?: bf16
-```
-
-*Примечание*: в некоторых случаях может возникнуть ошибка `ValueError: fp16 mixed precision requires a GPU`. Тогда на шестой вопрос (`What GPU(s) (by id) should be used for training on this machine as a comma-separated list? [all]:`) ответьте `0`. Будет использована только первая GPU (id `0`).
-
-### Обучение и инференс
-
-Процедуры обучения и инференса сильно зависят от архитектуры. Подробные инструкции — в документах по архитектурам в разделе [Документация](#документация) и в документах по конфигурации.
-
-## Прочее
-
-### Установка SageAttention
-
-sdbsd предоставил совместимую с Windows реализацию SageAttention и готовые wheels здесь: https://github.com/sdbds/SageAttention-for-windows. После установки triton, если версии Python, PyTorch и CUDA совпадают, можно скачать и установить готовый wheel со страницы [Releases](https://github.com/sdbds/SageAttention-for-windows/releases). Спасибо sdbsd за этот вклад.
-
-Для справки ниже инструкции по сборке и установке. Может потребоваться обновить Microsoft Visual C++ Redistributable до последней версии.
-
-1. Скачайте и установите wheel triton 3.1.0 под вашу версию Python [здесь](https://github.com/woct0rdho/triton-windows/releases/tag/v3.1.0-windows.post5).
-
-2. Установите Microsoft Visual Studio 2022 или Build Tools for Visual Studio 2022 с поддержкой сборки C++.
-
-3. Клонируйте репозиторий SageAttention в удобный каталог:
-    ```shell
-    git clone https://github.com/thu-ml/SageAttention.git
-    ```
-
-4. Откройте `x64 Native Tools Command Prompt for VS 2022` из меню Пуск в разделе Visual Studio 2022.
-
-5. Активируйте venv, перейдите в папку SageAttention и выполните команду ниже. Если появится ошибка, что DISTUTILS не настроен, выполните `set DISTUTILS_USE_SDK=1` и повторите:
-    ```shell
-    python setup.py install
-    ```
-
-На этом установка SageAttention завершена.
-
-### Версия PyTorch
-
-Если для `--attn_mode` указано `torch`, используйте PyTorch 2.5.1 или новее (в более ранних версиях видео может получаться чёрным).
-
-Если используете более раннюю версию, применяйте xformers или SageAttention.
-
-## Отказ от ответственности
-
-Этот репозиторий неофициальный и не связан с официальными репозиториями поддерживаемых архитектур.
-
-Репозиторий экспериментальный и активно развивается. Использование сообществом и обратная связь приветствуются, но учтите:
-
-- Не предназначен для промышленного использования
-- Возможности и API могут меняться без предупреждения
-- Некоторые функции всё ещё экспериментальные и могут работать не так, как ожидается
-- Функции обучения на видео всё ещё в разработке
-
-Если вы столкнулись с проблемами или ошибками, создайте Issue в этом репозитории и укажите:
-- Подробное описание проблемы
-- Шаги для воспроизведения
-- Сведения об окружении (ОС, GPU, VRAM, версия Python и т.д.)
-- Соответствующие сообщения об ошибках или логи
-
-## Участие в разработке
-
-Мы приветствуем вклад в проект! Подробности — в [CONTRIBUTING.md](./CONTRIBUTING.md).
-
-## Лицензия
-
-Код в каталоге `hunyuan_model` изменён на основе [HunyuanVideo](https://github.com/Tencent/HunyuanVideo) и следует их лицензии.
-
-Код в каталоге `hunyuan_video_1_5` изменён на основе [HunyuanVideo 1.5](https://github.com/Tencent-Hunyuan/HunyuanVideo-1.5) и следует их лицензии.
-
-Код в каталоге `wan` изменён на основе [Wan2.1](https://github.com/Wan-Video/Wan2.1). Лицензия — Apache License 2.0.
-
-Код в каталоге `frame_pack` изменён на основе [FramePack](https://github.com/lllyasviel/FramePack). Лицензия — Apache License 2.0.
-
-Код в `modules/convrot_int8_kernels.py` изменён на основе [comfy-kitchen](https://github.com/Comfy-Org/comfy-kitchen) (в свою очередь на основе dxqb/OneTrainer и ComfyUI-Flux2-INT8). Лицензия — Apache License 2.0.
-
-Остальной код — под Apache License 2.0. Часть кода скопирована и изменена из Diffusers.
+![AiHUB Inc.](images/logo_aihub.png)

@@ -1,0 +1,10 @@
+# === Общие обозначения ===
+# Замените TOK своим триггером, а описания — сценами для проверки вашей LoRA.
+# Размер: --w ширина, --h высота. Генерация: --s число шагов, --l CFG, --fs сдвиг.
+# --d фиксирует seed для сравнения контрольных точек обучения.
+
+# === Портрет ===
+TOK, a portrait of a woman in soft daylight, detailed background --w 1024 --h 1024 --d 42 --s 30 --l 4.0 --fs 2.2
+
+# === Пейзаж ===
+TOK, a small house beside a lake, mountains in the background --w 1024 --h 1024 --d 43 --s 30 --l 4.0 --fs 2.2

@@ -6,16 +6,12 @@ from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
-from transformers import Qwen2_5_VLConfig, Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer, Qwen2VLProcessor
-from transformers.image_utils import ImageInput
+from transformers import Qwen2_5_VLConfig, Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer
 from accelerate import init_empty_weights
 from diffusers.utils.torch_utils import randn_tensor
-from PIL import Image
 
-from musubi_tuner.dataset.image_video_dataset import BucketSelector, ARCHITECTURE_QWEN_IMAGE_EDIT
-from musubi_tuner.flux.flux_utils import is_fp8
+from musubi_tuner.utils.model_utils import is_fp8
 from musubi_tuner.qwen_image.qwen_image_autoencoder_kl import AutoencoderKLQwenImage
-from musubi_tuner.utils import image_utils
 from musubi_tuner.utils.safetensors_utils import load_safetensors, load_split_weights
 
 logger = logging.getLogger(__name__)
@@ -34,24 +30,6 @@ VAE_SCALE_FACTOR = 8  # Qwen Image uses 8x compression
 
 # region text encoder
 QWEN_IMAGE_ID = "Qwen/Qwen-Image"
-QWEN_IMAGE_EDIT_ID = "Qwen/Qwen-Image-Edit"
-
-GENERATION_CONFIG_JSON = """
-{
-  "bos_token_id": 151643,
-  "do_sample": true,
-  "eos_token_id": [
-    151645,
-    151643
-  ],
-  "pad_token_id": 151643,
-  "repetition_penalty": 1.05,
-  "temperature": 0.1,
-  "top_k": 1,
-  "top_p": 0.001,
-  "transformers_version": "4.53.1"
-}
-"""
 
 
 def load_qwen2_5_vl(
@@ -318,11 +296,6 @@ def load_qwen2_5_vl(
     return tokenizer, qwen2_5_vl
 
 
-def load_vl_processor() -> Qwen2VLProcessor:
-    logger.info(f"Loading VL processor from {QWEN_IMAGE_EDIT_ID}")
-    return Qwen2VLProcessor.from_pretrained(QWEN_IMAGE_EDIT_ID, subfolder="processor")
-
-
 def extract_masked_hidden(hidden_states: torch.Tensor, mask: torch.Tensor):
     bool_mask = mask.bool()
     valid_lengths = bool_mask.sum(dim=1)
@@ -376,176 +349,6 @@ def get_qwen_prompt_embeds(
     prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
 
     return prompt_embeds, encoder_attention_mask
-
-
-def get_qwen_prompt_embeds_with_image(
-    vl_processor: Qwen2VLProcessor,
-    vlm: Qwen2_5_VLForConditionalGeneration,
-    prompt: Union[str, List[str]],
-    image: Union[List[ImageInput], ImageInput] = None,
-    model_version: str = "edit",
-):
-    r"""
-    Args:
-        prompt (`str` or `List[str]`, *optional*):
-            prompt to be encoded
-        image (`PIL.Image.Image`, `np.ndarray`, `torch.Tensor`):
-            image to be encoded
-        model_version (`str`, *optional*, defaults to "edit"):
-            version of the prompt, can be "edit", "edit-2509" or "edit-2511"
-    """
-    if model_version == "edit":
-        prompt_template_encode = "<|im_start|>system\nDescribe the key features of the input image (color, shape, size, texture, objects, background), then explain how the user's text instruction should alter or modify the image. Generate a new image that meets the user's requirements while maintaining consistency with the original input where appropriate.<|im_end|>\n<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{}<|im_end|>\n<|im_start|>assistant\n"
-    elif model_version == "edit-2509" or model_version == "edit-2511":
-        prompt_template_encode = "<|im_start|>system\nDescribe the key features of the input image (color, shape, size, texture, objects, background), then explain how the user's text instruction should alter or modify the image. Generate a new image that meets the user's requirements while maintaining consistency with the original input where appropriate.<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n"
-    prompt_template_encode_start_idx = 64
-    # default_sample_size = 128
-
-    device = vlm.device
-    dtype = vlm.dtype
-
-    prompt = [prompt] if isinstance(prompt, str) else prompt
-
-    if isinstance(image, list):
-        if len(image) == 0:
-            image = None
-        else:
-            if isinstance(image[0], list):
-                pass  # list of list, it's ok
-            else:
-                assert len(prompt) == 1, "Image must be a list of list when multiple prompts are provided."
-                image = [image]  # wrap to list of list
-
-    elif image is not None:
-        image = [[image]]  # wrap to list of list, not necessary, but for consistency
-
-    # RGB conversion
-    if image is not None:
-        for i in range(len(image)):
-            for j in range(len(image[i])):
-                img = image[i][j]
-                if isinstance(img, np.ndarray):
-                    if img.shape[2] == 4:
-                        img = img[:, :, :3]
-                    image[i][j] = img
-                elif isinstance(img, Image.Image):
-                    if img.mode == "RGBA":
-                        img = img.convert("RGB")
-                    image[i][j] = img
-
-    assert image is None or len(image) == len(prompt), (
-        f"Number of images {len(image) if image is not None else 0} must match number of prompts {len(prompt)} for batch processing"
-    )
-
-    base_img_prompts = [""] * len(prompt)
-    if image is not None:
-        vl_image_inputs = []  # flat list of images
-        if model_version == "edit":
-            for i, img in enumerate(image):
-                if img is None or len(img) == 0:
-                    logger.warning(f"No image provided for prompt {i}, but version is {model_version}, this may cause issues.")
-                    continue
-                if len(img) > 1:
-                    logger.warning(
-                        f"Multiple images {len(img)} provided for prompt {i}, but version is {model_version}, 2nd and later images will be ignored."
-                    )
-                vl_image_inputs.append(img[0])
-        else:
-            img_prompt_template = "Picture {}: <|vision_start|><|image_pad|><|vision_end|>"
-            for i, img in enumerate(image):
-                if img is None or len(img) == 0:
-                    continue
-                for j in range(len(img)):
-                    base_img_prompts[i] += img_prompt_template.format(j + 1)
-                vl_image_inputs.extend(img)
-    else:
-        vl_image_inputs = None
-
-    template = prompt_template_encode
-    drop_idx = prompt_template_encode_start_idx
-    txt = [template.format(base + e) for base, e in zip(base_img_prompts, prompt)]
-
-    model_inputs = vl_processor(text=txt, images=vl_image_inputs, padding=True, return_tensors="pt").to(device)
-
-    if is_fp8(dtype):
-        with torch.no_grad(), torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-            encoder_hidden_states = vlm(
-                input_ids=model_inputs.input_ids,
-                attention_mask=model_inputs.attention_mask,
-                pixel_values=model_inputs.pixel_values,
-                image_grid_thw=model_inputs.image_grid_thw,
-                output_hidden_states=True,
-            )
-    else:
-        with torch.no_grad():
-            encoder_hidden_states = vlm(
-                input_ids=model_inputs.input_ids,
-                attention_mask=model_inputs.attention_mask,
-                pixel_values=model_inputs.pixel_values if vl_image_inputs is not None else None,
-                image_grid_thw=model_inputs.image_grid_thw if vl_image_inputs is not None else None,
-                output_hidden_states=True,
-            )
-
-    hidden_states = encoder_hidden_states.hidden_states[-1]
-    # if hidden_states.shape[1] > tokenizer_max_length + drop_idx:
-    #     logger.warning(f"Hidden states shape {hidden_states.shape} exceeds max length {tokenizer_max_length + drop_idx}")
-
-    split_hidden_states = extract_masked_hidden(hidden_states, model_inputs.attention_mask)
-    split_hidden_states = [e[drop_idx:] for e in split_hidden_states]
-    attn_mask_list = [torch.ones(e.size(0), dtype=torch.long, device=e.device) for e in split_hidden_states]
-    max_seq_len = max([e.size(0) for e in split_hidden_states])
-    prompt_embeds = torch.stack([torch.cat([u, u.new_zeros(max_seq_len - u.size(0), u.size(1))]) for u in split_hidden_states])
-    encoder_attention_mask = torch.stack([torch.cat([u, u.new_zeros(max_seq_len - u.size(0))]) for u in attn_mask_list])
-
-    prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
-
-    return prompt_embeds, encoder_attention_mask
-
-
-def get_image_caption(
-    vl_processor: Qwen2VLProcessor,
-    vlm: Qwen2_5_VLForConditionalGeneration,
-    prompt_image: Union[List[ImageInput], ImageInput] = None,
-    use_en_prompt: bool = True,
-) -> str:
-    image_caption_prompt_cn = """<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n# 图像标注器\n你是一个专业的图像标注器。请基于输入图像，撰写图注:\n1.
-使用自然、描述性的语言撰写图注，不要使用结构化形式或富文本形式。\n2. 通过加入以下内容，丰富图注细节：\n - 对象的属性：如数量、颜色、形状、大小、位置、材质、状态、动作等\n -
-对象间的视觉关系：如空间关系、功能关系、动作关系、从属关系、比较关系、因果关系等\n - 环境细节：例如天气、光照、颜色、纹理、气氛等\n - 文字内容：识别图像中清晰可见的文字，不做翻译和解释，用引号在图注中强调\n3.
-保持真实性与准确性：\n - 不要使用笼统的描述\n -
-描述图像中所有可见的信息，但不要加入没有在图像中出现的内容\n<|vision_start|><|image_pad|><|vision_end|><|im_end|>\n<|im_start|>assistant\n"""
-    image_caption_prompt_en = """<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n# Image Annotator\nYou are a professional
-image annotator. Please write an image caption based on the input image:\n1. Write the caption using natural,
-descriptive language without structured formats or rich text.\n2. Enrich caption details by including: \n - Object
-attributes, such as quantity, color, shape, size, material, state, position, actions, and so on\n - Vision Relations
-between objects, such as spatial relations, functional relations, possessive relations, attachment relations, action
-relations, comparative relations, causal relations, and so on\n - Environmental details, such as weather, lighting,
-colors, textures, atmosphere, and so on\n - Identify the text clearly visible in the image, without translation or
-explanation, and highlight it in the caption with quotation marks\n3. Maintain authenticity and accuracy:\n - Avoid
-generalizations\n - Describe all visible information in the image, while do not add information not explicitly shown in
-the image\n<|vision_start|><|image_pad|><|vision_end|><|im_end|>\n<|im_start|>assistant\n"""
-
-    if use_en_prompt:
-        prompt = image_caption_prompt_en
-    else:
-        prompt = image_caption_prompt_cn
-
-    # Remove alpha channel if present
-    if isinstance(prompt_image, list) and isinstance(prompt_image[0], np.ndarray):
-        prompt_image = [img[:, :, :3] if img.shape[2] == 4 else img for img in prompt_image]
-    elif isinstance(prompt_image, np.ndarray):
-        if prompt_image.shape[2] == 4:
-            prompt_image = prompt_image[:, :, :3]
-
-    model_inputs = vl_processor(
-        text=prompt,
-        images=prompt_image,
-        padding=True,
-        return_tensors="pt",
-    ).to(vlm.device)
-    generated_ids = vlm.generate(**model_inputs, max_new_tokens=512)
-    generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(model_inputs.input_ids, generated_ids)]
-    output_text = vl_processor.batch_decode(generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
-    return output_text.strip()
 
 
 """
@@ -727,9 +530,7 @@ def convert_comfyui_state_dict(sd):
     return new_state_dict
 
 
-def load_vae(
-    vae_path: str, input_channels: int = 3, device: Union[str, torch.device] = "cpu", disable_mmap: bool = False
-) -> AutoencoderKLQwenImage:
+def load_vae(vae_path: str, device: Union[str, torch.device] = "cpu", disable_mmap: bool = False) -> AutoencoderKLQwenImage:
     """Load VAE from a given path."""
     VAE_CONFIG_JSON = """
 {
@@ -801,7 +602,6 @@ def load_vae(
         dropout=config["dropout"],
         latents_mean=config["latents_mean"],
         latents_std=config["latents_std"],
-        input_channels=input_channels,
     )
 
     logger.info(f"Loading VAE from {vae_path}")
@@ -817,78 +617,41 @@ def load_vae(
     return vae
 
 
-def unpack_latents(latents, height, width, vae_scale_factor=VAE_SCALE_FACTOR, is_layered: Optional[bool] = None) -> torch.Tensor:
-    """
-    Returns layered (B, L, C, H, W) or single frame (B, C, 1, H, W) latents from (B, N, C) packed latents,
-    where L is number of layers, N = (H/2)*(W/2)*L.
-    If is_layered is None, it will automatically determine whether to return layered or single frame latents based on N and H, W.
-    """
+def unpack_latents(latents, height, width, vae_scale_factor=VAE_SCALE_FACTOR) -> torch.Tensor:
+    """Unpack original image tokens into (B, C, 1, H, W)."""
     batch_size, num_patches, channels = latents.shape
-
-    # VAE applies 8x compression on images but we must also account for packing which requires
-    # latent height and width to be divisible by 2.
     height = 2 * (int(height) // (vae_scale_factor * 2))
     width = 2 * (int(width) // (vae_scale_factor * 2))
-    num_layers = num_patches // ((height // 2) * (width // 2))
-
-    latents = latents.view(batch_size, num_layers, height // 2, width // 2, channels // 4, 2, 2)
+    latents = latents.view(batch_size, 1, height // 2, width // 2, channels // 4, 2, 2)
     latents = latents.permute(0, 1, 4, 2, 5, 3, 6)
-    latents = latents.reshape(batch_size, num_layers, channels // (2 * 2), height, width)
-    if num_layers == 1 and is_layered is not True:
-        latents = latents.permute(0, 2, 1, 3, 4)  # (B, C, 1, H, W)
-    return latents
-
-
-# not used in the current implementation, but kept for reference
-# def prepare_latent_image_ids(batch_size, height, width, device, dtype):
-#     latent_image_ids = torch.zeros(height, width, 3)
-#     latent_image_ids[..., 1] = latent_image_ids[..., 1] + torch.arange(height)[:, None]
-#     latent_image_ids[..., 2] = latent_image_ids[..., 2] + torch.arange(width)[None, :]
-#     latent_image_id_height, latent_image_id_width, latent_image_id_channels = latent_image_ids.shape
-#     latent_image_ids = latent_image_ids.reshape(latent_image_id_height * latent_image_id_width, latent_image_id_channels)
-#     return latent_image_ids.to(device=device, dtype=dtype)
+    latents = latents.reshape(batch_size, 1, channels // (2 * 2), height, width)
+    return latents.permute(0, 2, 1, 3, 4)
 
 
 def pack_latents(latents: torch.Tensor) -> torch.Tensor:
-    """
-    This function handles layered (B, L, C, H, W), single frame (B, C, 1, H, W) and normal (B, C, H, W) latents. So the logic is a bit weird.
-    If latents have 4 dimensions or the 3rd dimension is 1, it assumes it's single frame or normal latents.
-    It packs the latents into a shape of (B, H/2, W/2, C, 2, 2) and then reshapes it to (B, H/2 * W/2, C*4) = (B, Seq, In-Channels)
-    If latents have 5 dimensions and the 3rd dimension is not 1, it assumes it's layered latents.
-    It packs the latents into a shape of (B, L, H/2, W/2, C, 2, 2) and then reshapes it to (B, L * H/2 * W/2, C*4) = (B, Seq, In-Channels)
-    """
+    """Pack (B, C, H, W) or (B, C, 1, H, W) image latents."""
+    if latents.ndim not in (4, 5) or (latents.ndim == 5 and latents.shape[2] != 1):
+        raise ValueError("Expected image latents (B, C, H, W) or (B, C, 1, H, W)")
     batch_size = latents.shape[0]
-    if latents.ndim == 4 or latents.shape[2] == 1:
-        # single frame or normal latents
-        num_channels_latents = latents.shape[1]
-        height = latents.shape[-2]
-        width = latents.shape[-1]
+    num_channels_latents = latents.shape[1]
+    height = latents.shape[-2]
+    width = latents.shape[-1]
 
-        latents = latents.view(batch_size, num_channels_latents, height // 2, 2, width // 2, 2)
-        latents = latents.permute(0, 2, 4, 1, 3, 5)
-        latents = latents.reshape(batch_size, (height // 2) * (width // 2), num_channels_latents * 4)
-    else:
-        # layered latents: if num_layers == 1, it's equivalent to single frame latents
-        num_layers = latents.shape[1]
-        num_channels_latents = latents.shape[2]
-        height = latents.shape[-2]
-        width = latents.shape[-1]
-
-        latents = latents.view(batch_size, num_layers, num_channels_latents, height // 2, 2, width // 2, 2)
-        latents = latents.permute(0, 1, 3, 5, 2, 4, 6)
-        latents = latents.reshape(batch_size, num_layers * (height // 2) * (width // 2), num_channels_latents * 4)
+    latents = latents.view(batch_size, num_channels_latents, height // 2, 2, width // 2, 2)
+    latents = latents.permute(0, 2, 4, 1, 3, 5)
+    latents = latents.reshape(batch_size, (height // 2) * (width // 2), num_channels_latents * 4)
 
     return latents
 
 
-def prepare_latents(batch_size, num_layers, num_channels_latents, height, width, dtype, device, generator):
+def prepare_latents(batch_size, num_channels_latents, height, width, dtype, device, generator):
     # VAE applies 8x compression on images but we must also account for packing which requires
     # latent height and width to be divisible by 2.
     vae_scale_factor = VAE_SCALE_FACTOR
     height = 2 * (int(height) // (vae_scale_factor * 2))
     width = 2 * (int(width) // (vae_scale_factor * 2))
 
-    shape = (batch_size, num_layers, num_channels_latents, height, width)
+    shape = (batch_size, num_channels_latents, 1, height, width)
 
     if isinstance(generator, list) and len(generator) != batch_size:
         raise ValueError(
@@ -899,51 +662,6 @@ def prepare_latents(batch_size, num_layers, num_channels_latents, height, width,
     latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
     latents = pack_latents(latents)
     return latents
-
-
-CONDITION_IMAGE_RESOLUTION = (384, 384)
-VAE_IMAGE_RESOLUTION = (1024, 1024)
-
-
-def preprocess_control_image(
-    control_image_path: str, resize_to_prefered: bool = True, resize_size: Optional[Tuple[int, int]] = None
-) -> tuple[torch.Tensor, np.ndarray, Optional[np.ndarray]]:
-    """
-    Preprocess the control image for the model. See `preprocess_image` for details.
-
-    Args:
-        control_image_path (str): Path to the control image.
-        resize_to_prefered (bool): Whether to resize the image to the preferred resolution (based on the model's requirements).
-        resize_size (Optional[Tuple[int, int]]): Override target size for resizing if resize_to_prefered is False, with (width, height).
-
-    Returns:
-        Tuple[torch.Tensor, np.ndarray, Optional[np.ndarray]]: A tuple containing:
-            - control_image_tensor (torch.Tensor): The preprocessed control image tensor for the model. NCHW format.
-            - control_image_np (np.ndarray): The preprocessed control image as a NumPy array for conditioning. HWC format.
-            - None: Placeholder for compatibility (no additional data returned).
-    """
-    # See:
-    # https://github.com/huggingface/diffusers/pull/12188
-    # https://github.com/huggingface/diffusers/pull/12190
-
-    control_image = Image.open(control_image_path)
-
-    if resize_to_prefered or resize_size is None:
-        resolution = VAE_IMAGE_RESOLUTION if resize_to_prefered else control_image.size
-        resize_size = BucketSelector.calculate_bucket_resolution(
-            control_image.size, resolution, architecture=ARCHITECTURE_QWEN_IMAGE_EDIT
-        )
-
-        cond_resolution = CONDITION_IMAGE_RESOLUTION if resize_to_prefered else control_image.size
-        cond_resize_size = BucketSelector.calculate_bucket_resolution(
-            control_image.size, cond_resolution, architecture=ARCHITECTURE_QWEN_IMAGE_EDIT
-        )
-    else:
-        cond_resize_size = resize_size
-
-    control_image_tensor, _, _ = image_utils.preprocess_image(control_image, *resize_size, handle_alpha=True)
-    _, control_image_np, _ = image_utils.preprocess_image(control_image, *cond_resize_size, handle_alpha=True)
-    return control_image_tensor, control_image_np, None
 
 
 # endregion vae and latents
@@ -1548,38 +1266,15 @@ def get_scheduler(shift: Optional[float] = None) -> FlowMatchEulerDiscreteSchedu
 
 
 def add_model_version_args(parser: argparse.ArgumentParser):
-    parser.add_argument(
-        "--edit", action="store_true", help="Enable Qwen-Image-Edit original, recommend `--model_version edit` instead"
-    )
-    parser.add_argument(
-        "--edit_plus", action="store_true", help="Enable Qwen-Image-Edit-2509 (plus), recommend `--model_version edit-2509` instead"
-    )
-    parser.add_argument(
-        "--model_version",
-        type=str,
-        default=None,
-        help="training for Qwen-Image model version, e.g., 'original', 'layered', 'edit', 'edit-2509', 'edit-2511' etc.",
-    )
+    parser.add_argument("--model_version", type=str, default="original", choices=["original"], help="Qwen-Image original")
 
 
 def resolve_model_version_args(args: argparse.Namespace) -> str:
-    if args.model_version is not None:
-        args.model_version = args.model_version.lower()
-    elif getattr(args, "edit_plus", False):
-        args.model_version = "edit-2509"
-    elif getattr(args, "edit", False):
-        args.model_version = "edit"
-    else:
-        args.model_version = "original"  # Not specified, use original (non-edit) model
-
-    valid_model_versions = {"original", "layered", "edit", "edit-2509", "edit-2511"}
-    if args.model_version not in valid_model_versions:
-        valid_str = "', '".join(sorted(valid_model_versions))
-        raise ValueError(f"Invalid model_version '{args.model_version}'. Valid options are: '{valid_str}'.")
-
-    args.is_edit = args.model_version in {"edit", "edit-2509", "edit-2511"}
-    args.is_layered = args.model_version == "layered"
+    if (
+        getattr(args, "model_version", "original") != "original"
+        or getattr(args, "edit", False)
+        or getattr(args, "edit_plus", False)
+    ):
+        raise ValueError("model_version/edit/edit_plus: only original is supported; remove Edit/Layered selectors")
+    args.model_version = "original"
     return args.model_version
-
-
-# endregion model utils
