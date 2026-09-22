@@ -5,7 +5,7 @@ from dataclasses import (
 )
 import functools
 import random
-from textwrap import dedent, indent
+from textwrap import dedent
 import json
 from pathlib import Path
 
@@ -14,7 +14,6 @@ from typing import List, Optional, Sequence, Tuple, Union, TYPE_CHECKING
 if TYPE_CHECKING:
     from multiprocessing.sharedctypes import Synchronized
 
-    from musubi_tuner.dataset.audio_utils import AudioSpec
 
 SharedEpoch = Optional["Synchronized[int]"]
 
@@ -23,12 +22,19 @@ import toml
 import voluptuous
 from voluptuous import Any, ExactSequence, MultipleInvalid, Object, Schema
 
-from musubi_tuner.dataset.image_video_dataset import DatasetGroup, ImageDataset, VideoDataset
+from musubi_tuner.dataset.image_video_dataset import DatasetGroup, ImageDataset
+from musubi_tuner.dataset.bucket import BucketSelector
 
 import logging
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
+
+def positive_int(value):
+    if type(value) is not int or value <= 0:
+        raise voluptuous.Invalid("expected a positive integer (not a boolean)")
+    return value
 
 
 @dataclass
@@ -41,46 +47,19 @@ class BaseDatasetParams:
     num_repeats: int = 1
     cache_directory: Optional[str] = None
     debug_dataset: bool = False
-    architecture: str = "no_default"  # short style like "hv" or "wan"
+    architecture: str = "no_default"  # original Qwen short name is "qi"
 
 
 @dataclass
 class ImageDatasetParams(BaseDatasetParams):
     image_directory: Optional[str] = None
     image_jsonl_file: Optional[str] = None
-    control_directory: Optional[str] = None
-    multiple_target: Optional[bool] = False
-
-    # FramePack dependent parameters
-    fp_latent_window_size: Optional[int] = 9
-    fp_1f_clean_indices: Optional[Sequence[int]] = None
-    fp_1f_target_index: Optional[int] = None
-    fp_1f_no_post: Optional[bool] = False
-
-    no_resize_control: Optional[bool] = False  # if True, control images are not resized to target resolution
-    control_resolution: Optional[Tuple[int, int]] = None  # if set, control images are resized to this resolution
-
-
-@dataclass
-class VideoDatasetParams(BaseDatasetParams):
-    video_directory: Optional[str] = None
-    video_jsonl_file: Optional[str] = None
-    control_directory: Optional[str] = None
-    target_frames: Sequence[int] = (1,)
-    frame_extraction: Optional[str] = "head"
-    frame_stride: Optional[int] = 1
-    frame_sample: Optional[int] = 1
-    max_frames: Optional[int] = 129
-    source_fps: Optional[float] = None
-
-    # FramePack dependent parameters
-    fp_latent_window_size: Optional[int] = 9
 
 
 @dataclass
 class DatasetBlueprint:
     is_image_dataset: bool
-    params: Union[ImageDatasetParams, VideoDatasetParams]
+    params: ImageDatasetParams
 
 
 @dataclass
@@ -113,9 +92,9 @@ class ConfigSanitizer:
     # datasets schema
     DATASET_ASCENDABLE_SCHEMA = {
         "caption_extension": str,
-        "batch_size": int,
-        "num_repeats": int,
-        "resolution": functools.partial(__validate_and_convert_scalar_or_twodim.__func__, int),
+        "batch_size": positive_int,
+        "num_repeats": positive_int,
+        "resolution": functools.partial(__validate_and_convert_scalar_or_twodim.__func__, positive_int),
         "enable_bucket": bool,
         "bucket_no_upscale": bool,
     }
@@ -123,27 +102,6 @@ class ConfigSanitizer:
         "image_directory": str,
         "image_jsonl_file": str,
         "cache_directory": str,
-        "control_directory": str,
-        "multiple_target": bool,
-        "fp_latent_window_size": int,
-        "fp_1f_clean_indices": [int],
-        "fp_1f_target_index": int,
-        "fp_1f_no_post": bool,
-        "no_resize_control": bool,
-        "control_resolution": functools.partial(__validate_and_convert_scalar_or_twodim.__func__, int),
-    }
-    VIDEO_DATASET_DISTINCT_SCHEMA = {
-        "video_directory": str,
-        "video_jsonl_file": str,
-        "control_directory": str,
-        "target_frames": [int],
-        "frame_extraction": str,
-        "frame_stride": int,
-        "frame_sample": int,
-        "max_frames": int,
-        "cache_directory": str,
-        "source_fps": float,
-        "fp_latent_window_size": int,
     }
 
     # options handled by argparse but not handled by user config
@@ -156,18 +114,7 @@ class ConfigSanitizer:
             self.DATASET_ASCENDABLE_SCHEMA,
             self.IMAGE_DATASET_DISTINCT_SCHEMA,
         )
-        self.video_dataset_schema = self.__merge_dict(
-            self.DATASET_ASCENDABLE_SCHEMA,
-            self.VIDEO_DATASET_DISTINCT_SCHEMA,
-        )
-
-        def validate_flex_dataset(dataset_config: dict):
-            if "video_directory" in dataset_config or "video_jsonl_file" in dataset_config:
-                return Schema(self.video_dataset_schema)(dataset_config)
-            else:
-                return Schema(self.image_dataset_schema)(dataset_config)
-
-        self.dataset_schema = validate_flex_dataset
+        self.dataset_schema = Schema(self.image_dataset_schema)
 
         self.general_schema = self.__merge_dict(
             self.DATASET_ASCENDABLE_SCHEMA,
@@ -222,7 +169,13 @@ class BlueprintGenerator:
 
     # runtime_params is for parameters which is only configurable on runtime, such as tokenizer
     def generate(self, user_config: dict, argparse_namespace: argparse.Namespace, **runtime_params) -> Blueprint:
-        sanitized_user_config = self.sanitizer.sanitize_user_config(user_config)
+        source = getattr(argparse_namespace, "dataset_config", None) or "dataset configuration"
+        try:
+            sanitized_user_config = self.sanitizer.sanitize_user_config(user_config)
+        except (voluptuous.Invalid, TypeError) as error:
+            raise ValueError(f"{source}: {error}; use supported original image dataset fields and types") from error
+        if not sanitized_user_config.get("datasets"):
+            raise ValueError(f"{source}: datasets is empty; provide at least one image dataset")
         sanitized_argparse_namespace = self.sanitizer.sanitize_argparse_namespace(argparse_namespace)
 
         argparse_config = {k: v for k, v in vars(sanitized_argparse_namespace).items() if v is not None}
@@ -230,15 +183,19 @@ class BlueprintGenerator:
 
         dataset_blueprints = []
         for dataset_config in sanitized_user_config.get("datasets", []):
-            is_image_dataset = "image_directory" in dataset_config or "image_jsonl_file" in dataset_config
-            if is_image_dataset:
-                dataset_params_klass = ImageDatasetParams
-            else:
-                dataset_params_klass = VideoDatasetParams
-
+            is_image_dataset = True
+            source_keys = [key for key in ("image_directory", "image_jsonl_file") if dataset_config.get(key)]
+            if len(source_keys) != 1:
+                raise ValueError(
+                    f"{source}: datasets[{len(dataset_blueprints)}] requires exactly one image_directory or image_jsonl_file; provide one image source"
+                )
             params = self.generate_params_by_fallbacks(
-                dataset_params_klass, [dataset_config, general_config, argparse_config, runtime_params]
+                ImageDatasetParams, [dataset_config, general_config, argparse_config, runtime_params]
             )
+            if params.image_jsonl_file and not params.cache_directory:
+                raise ValueError(
+                    f"{source}: datasets[{len(dataset_blueprints)}].cache_directory is required for image_jsonl_file; set a cache location"
+                )
             dataset_blueprints.append(DatasetBlueprint(is_image_dataset, params))
 
         dataset_group_blueprint = DatasetGroupBlueprint(dataset_blueprints)
@@ -267,26 +224,17 @@ class BlueprintGenerator:
 
 
 # if training is True, it will return a dataset group for training, otherwise for caching
-# audio_spec: audio-capable architectures pass their AudioSpec here to enable audio for video datasets
 def generate_dataset_group_by_blueprint(
     dataset_group_blueprint: DatasetGroupBlueprint,
     training: bool = False,
     num_timestep_buckets: Optional[int] = None,
     shared_epoch: SharedEpoch = None,
-    audio_spec: Optional["AudioSpec"] = None,
 ) -> DatasetGroup:
-    datasets: List[Union[ImageDataset, VideoDataset]] = []
+    datasets: List[ImageDataset] = []
 
     for dataset_blueprint in dataset_group_blueprint.datasets:
-        if dataset_blueprint.is_image_dataset:
-            dataset_klass = ImageDataset
-        else:
-            dataset_klass = VideoDataset
-
         dataset_params = asdict(dataset_blueprint.params)
-        if not dataset_blueprint.is_image_dataset and audio_spec is not None:
-            dataset_params["audio_spec"] = audio_spec
-        dataset = dataset_klass(**dataset_params)
+        dataset = ImageDataset(**dataset_params)
         datasets.append(dataset)
 
     # assertion
@@ -294,8 +242,8 @@ def generate_dataset_group_by_blueprint(
     num_of_unique_cache_directories = len(set(cache_directories))
     if num_of_unique_cache_directories != len(cache_directories):
         raise ValueError(
-            "cache directory should be unique for each dataset (note that cache directory is image/video directory if not specified)"
-            + " / cache directory は各データセットごとに異なる必要があります（指定されていない場合はimage/video directoryが使われるので注意）"
+            "cache directory should be unique for each dataset (note that cache directory is image directory if not specified)"
+            + " / cache directory は各データセットごとに異なる必要があります（指定されていない場合はimage directoryが使われるので注意）"
         )
 
     # print info
@@ -317,42 +265,7 @@ def generate_dataset_group_by_blueprint(
     """
         )
 
-        if is_image_dataset:
-            info += indent(
-                dedent(
-                    f"""\
-        image_directory: "{dataset.image_directory}"
-        image_jsonl_file: "{dataset.image_jsonl_file}"
-        control_directory: "{dataset.control_directory}"
-        multiple_target: {dataset.multiple_target}
-        fp_latent_window_size: {dataset.fp_latent_window_size}
-        fp_1f_clean_indices: {dataset.fp_1f_clean_indices}
-        fp_1f_target_index: {dataset.fp_1f_target_index}
-        fp_1f_no_post: {dataset.fp_1f_no_post}
-        no_resize_control: {dataset.no_resize_control}
-        control_resolution: {dataset.control_resolution}
-    \n"""
-                ),
-                "    ",
-            )
-        else:
-            info += indent(
-                dedent(
-                    f"""\
-        video_directory: "{dataset.video_directory}"
-        video_jsonl_file: "{dataset.video_jsonl_file}"
-        control_directory: "{dataset.control_directory}"
-        target_frames: {dataset.target_frames}
-        frame_extraction: {dataset.frame_extraction}
-        frame_stride: {dataset.frame_stride}
-        frame_sample: {dataset.frame_sample}
-        max_frames: {dataset.max_frames}
-        source_fps: {dataset.source_fps}
-        fp_latent_window_size: {dataset.fp_latent_window_size}
-    \n"""
-                ),
-                "    ",
-            )
+        info += f"    image_directory: {dataset.image_directory}\n    image_jsonl_file: {dataset.image_jsonl_file}\n"
     logger.info(f"{info}")
 
     # make buckets first because it determines the length of dataset
@@ -392,34 +305,8 @@ def load_user_config(file: str) -> dict:
     else:
         raise ValueError(f"not supported config file format / 対応していない設定ファイルの形式です: {file}")
 
-    deprecated_key_map = {
-        "flux_kontext_no_resize_control": "no_resize_control",
-        "qwen_image_edit_no_resize_control": "no_resize_control",
-        "qwen_image_edit_control_resolution": "control_resolution",
-    }
-
-    def normalize_deprecated_keys(section: dict, section_name: str) -> None:
-        for old_key, new_key in deprecated_key_map.items():
-            if old_key not in section:
-                continue
-            if new_key in section:
-                logger.warning(
-                    f"Deprecated config key '{old_key}' is ignored because '{new_key}' is already set in {section_name}."
-                )
-            else:
-                section[new_key] = section[old_key]
-                logger.warning(f"Deprecated config key '{old_key}' found in {section_name}; use '{new_key}' instead.")
-            del section[old_key]
-
-    general_config = config.get("general")
-    if isinstance(general_config, dict):
-        normalize_deprecated_keys(general_config, "general")
-
-    datasets_config = config.get("datasets", [])
-    if isinstance(datasets_config, list):
-        for idx, dataset_config in enumerate(datasets_config):
-            if isinstance(dataset_config, dict):
-                normalize_deprecated_keys(dataset_config, f"datasets[{idx}]")
+    if not isinstance(config, dict):
+        raise ValueError(f"{file}: dataset configuration must be a table/object; provide general and datasets")
 
     return config
 
@@ -457,3 +344,54 @@ if __name__ == "__main__":
     logger.info(f"{blueprint}")
 
     dataset_group = generate_dataset_group_by_blueprint(blueprint.dataset_group)
+
+
+def validate_dataset_sources(group, source):
+    """Read source declarations and image headers before models or cache output side effects."""
+    from PIL import Image
+
+    for index, dataset in enumerate(group.datasets):
+        label = f"{source}: dataset {index + 1}"
+        if any(size < 16 for size in dataset.resolution):
+            raise ValueError(f"{label}: resolution must be usable for image packing (at least 16); increase it")
+        if dataset.enable_bucket and min(dataset.resolution) < 32 and dataset.resolution[0] * dataset.resolution[1] < 1024:
+            raise ValueError(f"{label}: resolution area is too small for buckets; increase it or disable buckets")
+        if not dataset.enable_bucket and any(size % 16 for size in dataset.resolution):
+            raise ValueError(f"{label}: resolution must be divisible by 16 without buckets; correct the dimensions")
+        cache = Path(dataset.cache_directory)
+        for path in (cache, *cache.parents):
+            if path.exists() and not path.is_dir():
+                raise ValueError(
+                    f"{label}: cache_directory={cache}: {path} is a file; "
+                    "supply a directory path whose existing parents are directories"
+                )
+        datasource = dataset.datasource
+        if len(datasource) == 0:
+            raise ValueError(f"{label}: no images with captions; supply original-image sources and matching captions")
+        buckets = BucketSelector(dataset.resolution, dataset.enable_bucket, dataset.bucket_no_upscale, dataset.architecture)
+        for item_index in range(len(datasource)):
+            try:
+                image_path, caption = datasource.get_caption(item_index)
+                with Image.open(image_path) as image:
+                    bucket = buckets.get_bucket_resolution(image.size)
+                    image.verify()
+            except (OSError, ValueError) as error:
+                raise ValueError(
+                    f"{label}: item {item_index + 1}: invalid image/caption source: {error}; correct the source file"
+                ) from error
+            if any(size < 16 for size in bucket):
+                raise ValueError(
+                    f"{label}: item {item_index + 1}: source {image_path!r} selects unusable bucket {bucket}; "
+                    "use images at least 16 pixels in each dimension or disable bucket_no_upscale"
+                )
+
+
+def validate_cache_args(args):
+    for key in ("batch_size", "num_workers", "console_width", "console_num_images"):
+        value = getattr(args, key, None)
+        if value is not None and value <= 0:
+            raise ValueError(f"CLI: {key} must be positive; omit it for the existing default")
+    checkpoint_key = "text_encoder" if hasattr(args, "text_encoder") else "vae"
+    checkpoint = getattr(args, checkpoint_key, None)
+    if not getattr(args, "debug_mode", None) and (not checkpoint or not Path(checkpoint).is_file()):
+        raise ValueError(f"CLI: {checkpoint_key}={checkpoint!r} is not an input file; supply an existing checkpoint")

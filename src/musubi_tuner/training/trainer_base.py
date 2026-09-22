@@ -1,11 +1,4 @@
-"""NetworkTrainer base class shared by all architecture-specific training scripts.
-
-Architecture-specific methods (load_vae, load_transformer, call_dit,
-process_sample_prompts, do_inference, ...) are declared here as abstract hooks
-and implemented by subclasses in each *_train_network.py (see e.g.
-HunyuanVideoNetworkTrainer in hv_train_network.py, WanNetworkTrainer in
-wan_train_network.py, ...).
-"""
+"""Existing shared engine for Qwen-Image adapter training and its observation/state hooks."""
 
 import ast
 import asyncio
@@ -39,13 +32,12 @@ from diffusers.optimization import (
 from transformers.optimization import SchedulerType, TYPE_TO_SCHEDULER_FUNCTION
 
 from musubi_tuner.dataset import config_utils
-from musubi_tuner.dataset.architectures import round_down_frame_count
 from musubi_tuner.modules.custom_offloading_utils import BlockSwapConfig
 from musubi_tuner.modules.lr_schedulers import RexLR
 from musubi_tuner.modules.scheduling_flow_match_discrete import FlowMatchDiscreteScheduler
 import musubi_tuner.networks.lora as lora_module
 from musubi_tuner.dataset.config_utils import BlueprintGenerator, ConfigSanitizer
-from musubi_tuner.hv_generate_video import save_images_grid, save_videos_grid
+from musubi_tuner.utils.image_utils import save_images_grid
 
 import logging
 
@@ -134,16 +126,10 @@ class DiTOutput:
 
 
 class NetworkTrainer:
-    # audio-capable architectures override this class attribute with their AudioSpec so that
-    # dataset construction enables audio (class attribute because _build_dataset runs before
-    # handle_model_specific_args)
-    audio_spec = None
-
     def __init__(self):
         self.blocks_to_swap = None
         self.timestep_range_pool = []
         self.num_timestep_buckets: Optional[int] = None  # for get_bucketed_timestep()
-        self.vae_frame_stride = 4  # legacy frame-grid fallback; some architectures set 1 or use a custom formula
         self.default_discrete_flow_shift = 14.5  # default value for discrete flow shift for all models TODO may be None is better
 
     # TODO 他のスクリプトと共通化する
@@ -955,8 +941,6 @@ class NetworkTrainer:
         sample_steps = sample_parameter.get("sample_steps", 20)
         width = sample_parameter.get("width", 256)  # make smaller for faster and memory saving inference
         height = sample_parameter.get("height", 256)
-        frame_count = sample_parameter.get("frame_count", 1)
-        guidance_scale = sample_parameter.get("guidance_scale", self.default_guidance_scale)
         discrete_flow_shift = sample_parameter.get("discrete_flow_shift", self.default_discrete_flow_shift)
         seed = sample_parameter.get("seed")
         prompt: str = sample_parameter.get("prompt", "")
@@ -966,26 +950,6 @@ class NetworkTrainer:
         # round width and height to multiples of 8
         width = (width // 8) * 8
         height = (height // 8) * 8
-
-        frame_count = self.round_sample_frame_count(frame_count)
-
-        if self.i2v_training:
-            image_path = sample_parameter.get("image_path", None)
-            if image_path is None:
-                logger.error("No image_path for i2v model / i2vモデルのサンプル画像生成にはimage_pathが必要です")
-                return
-        else:
-            image_path = None
-
-        if self.control_training:
-            control_video_path = sample_parameter.get("control_video_path", None)
-            if control_video_path is None:
-                logger.error(
-                    "No control_video_path for control model / controlモデルのサンプル画像生成にはcontrol_video_pathが必要です"
-                )
-                return
-        else:
-            control_video_path = None
 
         device = accelerator.device
         if seed is not None:
@@ -1001,9 +965,7 @@ class NetworkTrainer:
         logger.info(f"prompt: {prompt}")
         logger.info(f"height: {height}")
         logger.info(f"width: {width}")
-        logger.info(f"frame count: {frame_count}")
         logger.info(f"sample steps: {sample_steps}")
-        logger.info(f"guidance scale: {guidance_scale}")
         logger.info(f"discrete flow shift: {discrete_flow_shift}")
         if seed is not None:
             logger.info(f"seed: {seed}")
@@ -1014,11 +976,6 @@ class NetworkTrainer:
             logger.info(f"negative prompt: {negative_prompt}")
             logger.info(f"cfg scale: {cfg_scale}")
 
-        if self.i2v_training:
-            logger.info(f"image path: {image_path}")
-        if self.control_training:
-            logger.info(f"control video path: {control_video_path}")
-
         # inference: architecture dependent
         # Check if transformer has self-referencing _orig_mod (compiled model hack)
         # If so, skip eval/train to avoid infinite recursion
@@ -1027,7 +984,7 @@ class NetworkTrainer:
         if not has_self_ref_orig_mod:
             transformer.eval()
 
-        video = self.do_inference(
+        image = self.do_inference(
             accelerator,
             args,
             sample_parameter,
@@ -1038,21 +995,17 @@ class NetworkTrainer:
             sample_steps,
             width,
             height,
-            frame_count,
             generator,
             do_classifier_free_guidance,
-            guidance_scale,
             cfg_scale,
-            image_path=image_path,
-            control_video_path=control_video_path,
         )
 
         if not has_self_ref_orig_mod:
             transformer.train(was_train)
 
-        # Save video
-        if video is None:
-            logger.error("No video generated / 生成された動画がありません")
+        # Save image
+        if image is None:
+            logger.error("No image generated")
             return
 
         ts_str = time.strftime("%Y%m%d%H%M%S", time.localtime())
@@ -1063,37 +1016,24 @@ class NetworkTrainer:
             f"{'' if args.output_name is None else args.output_name + '_'}{num_suffix}_{prompt_idx:02d}_{ts_str}{seed_suffix}"
         )
 
-        self.save_sample(accelerator, args, sample_parameter, video, save_dir, save_path, steps)
+        self.save_sample(accelerator, args, sample_parameter, image, save_dir, save_path, steps)
 
         # Move models back to initial state
         vae.to("cpu")
         clean_memory_on_device(device)
 
-    def round_sample_frame_count(self, frame_count: int) -> int:
-        """Snaps a sample prompt's frame count (``--f``) onto the architecture's frame grid."""
-        return round_down_frame_count(frame_count, self.architecture, self.vae_frame_stride)
-
     def save_sample(self, accelerator, args, sample_parameter, sample, save_dir: str, save_path: str, steps: int) -> None:
         """Writes the value ``do_inference`` returned under ``save_dir/save_path`` (a stem without
         extension) and logs it to wandb when a tracker is active.
 
-        Default: ``sample`` is a ``(N, C, F, H, W)`` video tensor in [0, 1], saved as an image grid
-        for single-frame outputs and as an mp4 otherwise. Architectures whose samples are not a
-        plain video tensor (e.g. joint audio/video) override this.
+        ``sample`` is a ``(N, C, 1, H, W)`` image tensor in [0, 1], saved as a PNG grid.
         """
         prompt_idx = sample_parameter.get("enum", 0)
         wandb_tracker, wandb = wandb_tracker_and_module(accelerator)
-        if sample.shape[2] == 1:
-            # In Qwen-Image-Layered, video is (N, C, 1, H, W) where N=Layers, otherwise (1, C, 1, H, W)
-            image_paths = save_images_grid(sample, save_dir, save_path, n_rows=sample.shape[0], create_subdir=False)
-            if wandb_tracker is not None:
-                for image_path in image_paths:
-                    wandb_tracker.log({f"sample_{prompt_idx}": wandb.Image(image_path)}, step=steps)
-        else:
-            video_path = os.path.join(save_dir, save_path) + ".mp4"
-            save_videos_grid(sample, video_path)
-            if wandb_tracker is not None:
-                wandb_tracker.log({f"sample_{prompt_idx}": wandb.Video(video_path)}, step=steps)
+        image_paths = save_images_grid(sample, save_dir, save_path, n_rows=sample.shape[0], create_subdir=False)
+        if wandb_tracker is not None:
+            for image_path in image_paths:
+                wandb_tracker.log({f"sample_{prompt_idx}": wandb.Image(image_path)}, step=steps)
 
     # region model specific (abstract hooks — implemented by architecture-specific subclasses)
 
@@ -1106,17 +1046,7 @@ class NetworkTrainer:
         raise NotImplementedError("subclass must define `architecture_full_name`")
 
     def handle_model_specific_args(self, args: argparse.Namespace):
-        # Subclasses must set: self._i2v_training, self._control_training, self.default_guidance_scale.
-        # They may also set arch-specific state like self.default_discrete_flow_shift, self.vae_frame_stride.
         raise NotImplementedError("subclass must implement `handle_model_specific_args`")
-
-    @property
-    def i2v_training(self) -> bool:
-        return self._i2v_training
-
-    @property
-    def control_training(self) -> bool:
-        return self._control_training
 
     def convert_weight_keys(self, weights_sd: dict[str, torch.Tensor], network_module: lora_module):
         # Default: assume the saved LoRA is already in this project's native format.
@@ -1168,13 +1098,9 @@ class NetworkTrainer:
         sample_steps,
         width,
         height,
-        frame_count,
         generator,
         do_classifier_free_guidance,
-        guidance_scale,
         cfg_scale,
-        image_path=None,
-        control_video_path=None,
     ):
         """Architecture-dependent sample inference used during training."""
         raise NotImplementedError("subclass must implement `do_inference`")
@@ -1278,8 +1204,7 @@ class NetworkTrainer:
         Default implementation: weighted MSE between ``output.pred`` and
         ``output.target`` with the SD3-style ``args.weighting_scheme`` applied,
         then ``.mean()``. Override to swap the loss formulation entirely
-        (e.g. Self-Flow's L_gen + gamma * L_rep) or to add auxiliary terms
-        (e.g. HiDream-O1's step-gated DINO perceptual loss). Subclasses are
+        or to add auxiliary terms. Subclasses are
         responsible for whatever weighting/reduction they need — this hook owns
         the full loss computation, not just the per-element MSE.
 
@@ -1384,8 +1309,7 @@ class NetworkTrainer:
         threads through unchanged to ``sample_image_inference`` and the sample-image
         hooks. The default implementation covers single-VAE architectures: it parses
         prompts via ``process_sample_prompts`` and returns the sampling VAE as the
-        resources. Architectures whose sampling needs more (e.g. separate video and
-        audio VAEs) override this wholesale and return their own payload.
+        resources. The Qwen implementation uses the original image VAE.
         Both values are None when ``--sample_prompts`` is not set.
         """
         sample_parameters = None
@@ -1458,12 +1382,21 @@ class NetworkTrainer:
 
     # endregion extension seams
 
+    def validate_training_inputs(self, args):
+        """Specialized preflight before loaders or tracker setup."""
+        pass
+
+    def validate_training_dataset(self, args, dataset):
+        pass
+
     def train(self, args):
+        self.validate_training_inputs(args)
         if not self._validate_args_and_init(args):
             return
 
         session_id, training_started_at = self._init_session(args)
         train_dataset_group, collator, current_epoch = self._build_dataset(args)
+        self.validate_training_dataset(args, train_dataset_group)
         accelerator, weight_dtype, dit_dtype, dit_weight_dtype, vae_dtype = self._prepare_accelerator_and_dtypes(args)
         sample_parameters, sample_resources = self.prepare_sampling(args, accelerator, vae_dtype)
         transformer = self._load_dit_and_swap(args, accelerator, dit_weight_dtype)
@@ -1561,8 +1494,8 @@ class NetworkTrainer:
 
         if args.disable_numpy_memmap:
             logger.info(
-                "Disabling numpy memory mapping for model loading (for Wan, FramePack and Qwen-Image). This may lead to higher memory usage but can speed up loading in some cases."
-                " / モデル読み込み時のnumpyメモリマッピングを無効にします（Wan、FramePack、Qwen-Imageでのみ有効）。これによりメモリ使用量が増える可能性がありますが、場合によっては読み込みが高速化されることがあります"
+                "Disabling numpy memory mapping for model loading. This may lead to higher memory usage but can speed up loading in some cases."
+                " / モデル読み込み時のnumpyメモリマッピングを無効にします。これによりメモリ使用量が増える可能性がありますが、場合によっては読み込みが高速化されることがあります"
             )
 
         # check model specific arguments
@@ -1602,12 +1535,12 @@ class NetworkTrainer:
             training=True,
             num_timestep_buckets=self.num_timestep_buckets,
             shared_epoch=current_epoch,
-            audio_spec=self.audio_spec,
         )
 
+        config_utils.validate_dataset_sources(train_dataset_group, args.dataset_config)
         if train_dataset_group.num_train_items == 0:
             raise ValueError(
-                "No training items found in the dataset. Please ensure that the latent/Text Encoder cache has been created beforehand."
+                f"{args.dataset_config}: No training items found in the dataset. Please ensure that the latent/Text Encoder cache has been created beforehand."
                 " / データセットに学習データがありません。latent/Text Encoderキャッシュを事前に作成したか確認してください"
             )
 
@@ -1630,7 +1563,6 @@ class NetworkTrainer:
         elif args.mixed_precision == "bf16":
             weight_dtype = torch.bfloat16
 
-        # HunyuanVideo: bfloat16 or float16, Wan2.1: bfloat16
         dit_dtype = torch.bfloat16 if args.dit_dtype is None else model_utils.str_to_dtype(args.dit_dtype)
         dit_weight_dtype = (None if args.fp8_scaled else torch.float8_e4m3fn) if args.fp8_base else dit_dtype
         logger.info(f"DiT precision: {dit_dtype}, weight precision: {dit_weight_dtype}")
@@ -1695,9 +1627,9 @@ class NetworkTrainer:
                 net_kwargs[key] = value
 
         if args.dim_from_weights:
-            logger.info(f"Loading network from weights: {args.dim_from_weights}")
-            weights_sd = load_file(args.dim_from_weights)
-            network, _ = network_module.create_arch_network_from_weights(1, weights_sd, unet=transformer)
+            logger.info(f"Loading network from weights: {args.network_weights}")
+            weights_sd = load_file(args.network_weights)
+            network = network_module.create_arch_network_from_weights(1, weights_sd, unet=transformer)
         else:
             # We use the name create_arch_network for compatibility with LyCORIS
             if hasattr(network_module, "create_arch_network"):
@@ -1811,20 +1743,6 @@ class NetworkTrainer:
         # experimental feature: train the model with gradients in fp16/bf16
         network_dtype = torch.float32
         args.full_fp16 = args.full_bf16 = False  # temporary disabled because stochastic rounding is not supported yet
-        if args.full_fp16:
-            assert args.mixed_precision == "fp16", (
-                "full_fp16 requires mixed precision='fp16' / full_fp16を使う場合はmixed_precision='fp16'を指定してください。"
-            )
-            accelerator.print("enable full fp16 training.")
-            network_dtype = weight_dtype
-            network.to(network_dtype)
-        elif args.full_bf16:
-            assert args.mixed_precision == "bf16", (
-                "full_bf16 requires mixed precision='bf16' / full_bf16を使う場合はmixed_precision='bf16'を指定してください。"
-            )
-            accelerator.print("enable full bf16 training.")
-            network_dtype = weight_dtype
-            network.to(network_dtype)
 
         if dit_weight_dtype != dit_dtype and dit_weight_dtype is not None:
             logger.info(f"casting model to {dit_weight_dtype}")
@@ -1851,16 +1769,6 @@ class NetworkTrainer:
             transformer.eval()
 
         accelerator.unwrap_model(network).prepare_grad_etc(transformer)
-
-        if args.full_fp16:
-            # patch accelerator for fp16 training
-            # def patch_accelerator_for_fp16_training(accelerator):
-            org_unscale_grads = accelerator.scaler._unscale_grads_
-
-            def _unscale_grads_replacer(optimizer, inv_scale, found_inf, allow_fp16):
-                return org_unscale_grads(optimizer, inv_scale, found_inf, True)
-
-            accelerator.scaler._unscale_grads_ = _unscale_grads_replacer
 
         return transformer, network, optimizer, train_dataloader, lr_scheduler, training_model, network_dtype
 
@@ -1985,7 +1893,7 @@ class NetworkTrainer:
             "ss_logit_mean": args.logit_mean,
             "ss_logit_std": args.logit_std,
             "ss_mode_scale": args.mode_scale,
-            "ss_guidance_scale": args.guidance_scale,
+            "ss_guidance_scale": 1.0,
             "ss_timestep_sampling": args.timestep_sampling,
             "ss_sigmoid_scale": args.sigmoid_scale,
             "ss_discrete_flow_shift": args.discrete_flow_shift,

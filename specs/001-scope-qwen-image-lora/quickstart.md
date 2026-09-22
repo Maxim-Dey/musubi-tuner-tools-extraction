@@ -1,6 +1,6 @@
 # Quickstart and Validation Guide
 
-This guide describes the intended retained workflow after implementation. The current planning phase has not corrected the two template references or changed the code. Commands that load models below are instructions for the later private-server stage, not commands to execute locally during planning or implementation.
+This guide describes the implemented retained workflow. The two shipped template references are corrected. Commands that load models below are instructions for the later private-server stage; local implementation verification uses the offline checks described below.
 
 ## Prepare User Inputs
 
@@ -12,7 +12,7 @@ From the repository root, edit the existing three templates:
 
 | File | Required user replacements / retained references |
 | --- | --- |
-| `config_for_qwen_image_lora/train.toml` | Replace `dit`, `vae`, `text_encoder` with actual server paths. Set `dataset_config="config_for_qwen_image_lora/dataset.toml"`, `sample_prompts="config_for_qwen_image_lora/sample_prompts.txt"` (implementation's approved reference correction). Choose output name/locations as needed |
+| `config_for_qwen_image_lora/train.toml` | Replace `dit`, `vae`, `text_encoder` with actual server paths. Set `dataset_config="config_for_qwen_image_lora/dataset.toml"`, `sample_prompts="config_for_qwen_image_lora/sample_prompts.txt"` (implemented references). Choose output name/locations as needed |
 | `config_for_qwen_image_lora/dataset.toml` | Replace `image_directory` with captioned images; choose a cache directory. Each image has its basename `.txt` caption, or use the existing image JSONL source format. Add dataset sections/overrides if needed |
 | `config_for_qwen_image_lora/sample_prompts.txt` | Replace `TOK` and scene descriptions; choose prompt count, valid dimensions, seeds, steps, CFG and flow shift |
 
@@ -56,13 +56,13 @@ Resume from an existing compatible **state directory**, adjusting paths/output s
 accelerate launch --num_cpu_threads_per_process 1 --mixed_precision bf16 qwen_image_train_network.py --config_file config_for_qwen_image_lora/train.toml --resume qwen_image_lora/output/qwen_image_lora-step00000200-state
 ```
 
-The current implementation restores saved adapter/optimizer/scheduler/RNG through Accelerate but restarts the trainer's local epoch/global-step counters and does not skip previously consumed batches. This plan preserves that baseline; do not interpret `max_train_steps` as an automatically inferred remaining budget or claim exact data-cursor continuation. Consider the existing checkpoint/sample naming behavior when choosing resume output locations.
+The current implementation restores saved adapter/optimizer/scheduler/RNG through Accelerate but restarts the trainer's local epoch/global-step counters and does not skip previously consumed batches. This implementation preserves that baseline; do not interpret `max_train_steps` as an automatically inferred remaining budget or claim exact data-cursor continuation. Consider the existing checkpoint/sample naming behavior when choosing resume output locations.
 
 To initialize a new run from an adapter only, use the existing `--network_weights /srv/adapters/initial.safetensors` instead; that does not restore optimizer/scheduler/RNG state. `base_weights` is yet another existing path for merging adapters into the base before training, not resume.
 
 ## Local Verification Without GPU, Weights or Network
 
-These checks require a compatible dependency-complete CPU environment. The current checkout has no `.venv`; the inspected runtimes lack the ML dependencies, so real training/cache imports, parser integration and pytest regressions were **unavailable during planning**. The actual source checks and failed-import evidence are in [research.md](research.md). Do not install/download dependencies or claim these commands passed merely because they are documented.
+These checks require a compatible dependency-complete CPU environment. Planning initially lacked a dependency-complete runtime. Implementation located an existing Python 3.12 CPU environment and executed the actual imports, parser, tensor/cache/adapter and Accelerate checks recorded in [validation.md](validation.md). Do not install/download dependencies or claim these commands passed merely because they are documented.
 
 For local PowerShell checks in an already prepared environment, select its Python executable as `python`, then set:
 
@@ -75,7 +75,7 @@ $env:TRANSFORMERS_OFFLINE = '1'
 $env:WANDB_MODE = 'disabled'
 ```
 
-Before changing substantial logic, capture the results of available existing checks:
+The retained commands and focused checks include:
 
 ```powershell
 python -B qwen_image_cache_latents.py --help
@@ -86,7 +86,7 @@ python -B -m pytest -p no:cacheprovider -q tests/test_save_precision.py tests/te
 
 Help/import checks must import real modules; no fake torch/transformers/accelerate replacements. Do not invoke a cache or trainer without `--help` as a local smoke test. Record the original revision, template hashes, effective parser outputs and affected numerical/artifact behavior before extraction.
 
-During implementation, add only focused regression checks for the changed contracts, using the real readers and existing helpers. Suggested cohesive test files are `tests/test_qwen_image_config.py`, `tests/test_qwen_image_dataset_cache.py` and `tests/test_qwen_image_training_invariants.py`; these are planned files, not files created in this phase. The implementation test command can then include them together with the retained existing checks.
+Focused regression checks use real readers and existing helpers. The cohesive test files are `tests/test_qwen_image_config.py`, `tests/test_qwen_image_dataset_cache.py` and `tests/test_qwen_image_training_invariants.py`; these files now contain implementation regression checks. The implementation test command can then include them together with the retained existing checks.
 
 | Scenario | Expected local evidence |
 | --- | --- |
@@ -98,4 +98,4 @@ During implementation, add only focused regression checks for the changed contra
 | Save/resume | Real small adapter and CPU Accelerate state serialization/restoration, retention boundaries and filter hooks; record counter reset separately, without full-training simulation |
 | Cleanup/docs | Retained imports and short/qualified dynamic adapters resolve; no excluded code/dispatch remains; README commands and shipped references agree with parsers; dependency manifests/any existing locks agree |
 
-Validate corrected template links during implementation; they deliberately remain unedited in this planning phase. Use [the contract](contracts/cli-and-config.md) for supported values and early errors. Missing local prerequisites remain an explicit unperformed check, and cannot be counted toward completion of implementation.
+The corrected template links are checked against the actual readers and repository files. Use [the contract](contracts/cli-and-config.md) for supported values and early errors. Missing local prerequisites remain an explicit unperformed check, and cannot be counted toward completion of implementation.

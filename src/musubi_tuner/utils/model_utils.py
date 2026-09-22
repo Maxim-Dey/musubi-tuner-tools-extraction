@@ -340,3 +340,8 @@ def compile_transformer(
             )
             blocks[i] = block
     return transformer
+
+
+# Extracted unchanged from Musubi Tuner flux/flux_utils.py.
+def is_fp8(dt):
+    return dt in [torch.float8_e4m3fn, torch.float8_e4m3fnuz, torch.float8_e5m2, torch.float8_e5m2fnuz]

@@ -9,6 +9,8 @@ import argparse
 import logging
 import os
 import pathlib
+import math
+import sys
 
 import toml
 from accelerate.utils import DynamoBackend
@@ -71,8 +73,8 @@ def _add_attention_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--flash3",
         action="store_true",
-        help="use FlashAttention 3 for CrossAttention, requires FlashAttention 3, HunyuanVideo does not support this yet"
-        " / CrossAttentionにFlashAttention 3を使う、FlashAttention 3が必要。HunyuanVideoは未対応。",
+        help="use FlashAttention 3 for CrossAttention, not supported for Qwen-Image training"
+        " / CrossAttentionにFlashAttention 3を使う、FlashAttention 3が必要。Qwen-Image学習は未対応。",
     )
     parser.add_argument(
         "--split_attn",
@@ -309,7 +311,7 @@ def _add_optimizer_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--optimizer_type",
         type=str,
-        default="",
+        default="AdamW",
         help="Optimizer to use / オプティマイザの種類: AdamW (default), AdamW8bit, AdaFactor. "
         "Also, you can use any optimizer by specifying the full path to the class, like 'torch.optim.AdamW', 'bitsandbytes.optim.AdEMAMix8bit' or 'bitsandbytes.optim.PagedAdEMAMix8bit' etc. / ",
     )
@@ -423,23 +425,15 @@ def _add_memory_args(parser: argparse.ArgumentParser) -> None:
         " / (--block_swap_h2d_only用) ストリーミング用GPUリングバッファ数。2でダブルバッファ、1で最小メモリ(オーバーラップなし)。",
     )
     parser.add_argument(
-        "--img_in_txt_in_offloading",
-        action="store_true",
-        help="offload img_in and txt_in to cpu / img_inとtxt_inをCPUにオフロードする",
-    )
-    parser.add_argument(
         "--disable_numpy_memmap",
         action="store_true",
-        help="Disable numpy memory mapping for model loading. Only for Wan, FramePack, Qwen-Image and FLUX.2. Increases RAM usage but speeds up model loading in some cases."
-        " / モデル読み込み時のnumpyメモリマッピングを無効にします。Wan、FramePack、Qwen-Image、FLUX.2で有効です。RAM使用量が増えますが、場合によってはモデルの読み込みが高速化されます。",
+        help="Disable numpy memory mapping for model loading. Increases RAM usage but speeds up model loading in some cases."
+        " / モデル読み込み時のnumpyメモリマッピングを無効にします。RAM使用量が増えますが、場合によってはモデルの読み込みが高速化されます。",
     )
 
 
 def _add_timestep_args(parser: argparse.ArgumentParser) -> None:
     # parser.add_argument("--flow_shift", type=float, default=7.0, help="Shift factor for flow matching schedulers")
-    parser.add_argument(
-        "--guidance_scale", type=float, default=1.0, help="Embeded classifier free guidance scale (HunyuanVideo only)."
-    )
     parser.add_argument(
         "--timestep_sampling",
         choices=[
@@ -785,34 +779,92 @@ def setup_parser_common() -> argparse.ArgumentParser:
 
 
 def read_config_from_file(args: argparse.Namespace, parser: argparse.ArgumentParser):
-    if not args.config_file:
-        return args
+    source = "CLI"
+    actions = {action.dest: action for action in parser._actions}
+    if args.config_file:
+        source = args.config_file if args.config_file.endswith(".toml") else args.config_file + ".toml"
+        try:
+            config = toml.load(source)
+        except (OSError, ValueError) as error:
+            raise ValueError(f"{source}: cannot read training TOML; supply a valid existing file: {error}") from error
+        flattened = {}
+        for section, values in config.items():
+            for key, value in values.items() if isinstance(values, dict) else [(section, values)]:
+                label = f"{source}: {section}.{key}" if isinstance(values, dict) else f"{source}: {key}"
+                if key not in actions:
+                    raise ValueError(f"{label}: unsupported parameter; remove it or correct the spelling")
+                validate_original_selection(key, value, label)
+                flattened[key] = value
+        args = parser.parse_args(namespace=argparse.Namespace(**flattened))
+        args.config_file = os.path.splitext(source)[0]
+    # Check every raw CLI module selection, including a value superseded by a later occurrence.
+    tokens = sys.argv[1:]
+    for index, token in enumerate(tokens):
+        if token == "--":
+            break
+        option = parser._parse_optional(token)
+        # Newer Python maintenance releases return a list of candidate tuples.
+        # parse_args above has already rejected ambiguous options.
+        if isinstance(option, list):
+            option = option[0]
+        if option is None or option[0] is None:
+            continue
+        action, option_string, explicit_value = option[0], option[1], option[-1]
+        if action.dest in ("network_module", "model_version"):
+            value = explicit_value if explicit_value is not None else tokens[index + 1]
+            validate_original_selection(action.dest, value, f"CLI {option_string}")
+    validate_parser_values(args, parser, source)
+    args._config_source = source
+    return args
 
-    config_path = args.config_file + ".toml" if not args.config_file.endswith(".toml") else args.config_file
 
-    if not os.path.exists(config_path):
-        logger.info(f"{config_path} not found.")
-        exit(1)
+SUPPORTED_NETWORK_MODULES = {
+    prefix + name for prefix in ("networks.", "musubi_tuner.networks.") for name in ("lora_qwen_image", "loha", "lokr")
+}
 
-    logger.info(f"Loading settings from {config_path}...")
-    with open(config_path, "r", encoding="utf-8") as f:
-        config_dict = toml.load(f)
 
-    # combine all sections into one
-    ignore_nesting_dict = {}
-    for section_name, section_dict in config_dict.items():
-        # if value is not dict, save key and value as is
-        if not isinstance(section_dict, dict):
-            ignore_nesting_dict[section_name] = section_dict
+def validate_original_selection(key, value, source):
+    if key == "model_version" and value != "original":
+        raise ValueError(f"{source}: model_version={value!r} is unsupported; use original")
+    if key == "network_module" and value is not None and value not in SUPPORTED_NETWORK_MODULES:
+        raise ValueError(
+            f"{source}: network_module={value!r} is unsupported; use networks.lora_qwen_image, networks.loha or networks.lokr"
+        )
+
+
+def validate_parser_values(args, parser, source="CLI"):
+    """Apply the existing argparse types/choices to effective TOML values without numeric coercion."""
+    for action in parser._actions:
+        key = action.dest
+        value = getattr(args, key, None)
+        if value is None:
             continue
 
-        # if value is dict, save all key and value into one dict
-        for key, value in section_dict.items():
-            ignore_nesting_dict[key] = value
+        def fail(reason):
+            raise ValueError(f"{source}: {key}={value!r}: {reason}; correct this parameter")
 
-    config_args = argparse.Namespace(**ignore_nesting_dict)
-    args = parser.parse_args(namespace=config_args)
-    args.config_file = os.path.splitext(args.config_file)[0]
-    logger.info(args.config_file)
-
-    return args
+        values = value
+        if action.nargs in ("*", "+"):
+            if not isinstance(value, list) or (action.nargs == "+" and not value):
+                fail("expected a list")
+        else:
+            values = [value]
+        for item in values:
+            expected = action.type
+            if isinstance(action, (argparse._StoreTrueAction, argparse._StoreFalseAction)):
+                valid = type(item) is bool
+            elif expected is int:
+                valid = type(item) is int
+            elif expected in (float, _int_or_float):
+                valid = type(item) in (int, float) and math.isfinite(item)
+            elif expected is pathlib.Path:
+                valid = isinstance(item, (str, pathlib.Path))
+            elif expected is str or action.choices is not None:
+                valid = isinstance(item, str)
+            else:
+                valid = True
+            if not valid:
+                fail(f"invalid type/value for {expected or 'boolean'}")
+            if action.choices is not None and item not in action.choices:
+                fail(f"choose one of {list(action.choices)}")
+        validate_original_selection(key, value, source)

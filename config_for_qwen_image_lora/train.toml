@@ -9,7 +9,7 @@ vae = "D:/AI/models/qwen_image_vae.safetensors"
 text_encoder = "D:/AI/models/qwen_2.5_vl_7b.safetensors"
 
 # === Датасет и загрузка данных ===
-dataset_config = "qwen_image_lora/dataset.toml"
+dataset_config = "config_for_qwen_image_lora/dataset.toml"
 # 0 упрощает запуск загрузчика данных на Windows.
 max_data_loader_n_workers = 0
 persistent_data_loader_workers = false
@@ -38,7 +38,7 @@ seed = 42
 # === Оптимизатор и скорость обучения ===
 optimizer_type = "adamw8bit"
 learning_rate = 5e-5
-lr_scheduler = "constant"
+lr_scheduler = "constant_with_warmup"
 lr_warmup_steps = 200
 max_grad_norm = 1.0
 
@@ -69,6 +69,6 @@ log_with = "tensorboard"
 # === Контрольные изображения ===
 # Замените TOK в sample_prompts.txt своим триггером.
 # Чтобы отключить сэмплы, закомментируйте три параметра ниже.
-sample_prompts = "qwen_image_lora/sample_prompts.txt"
+sample_prompts = "config_for_qwen_image_lora/sample_prompts.txt"
 sample_every_n_steps = 200
 sample_at_first = false

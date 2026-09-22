@@ -14,11 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import inspect
 import numbers
 from typing import Any, Dict, List, Optional, Tuple, Union
 import math
-from math import prod
 
 # import numpy as np
 import torch
@@ -29,7 +27,7 @@ from accelerate import init_empty_weights
 from musubi_tuner.modules.custom_offloading_utils import BlockSwapConfig, create_offloader
 from musubi_tuner.modules.fp8_optimization_utils import apply_fp8_monkey_patch
 from musubi_tuner.qwen_image.qwen_image_modules import get_activation
-from musubi_tuner.hunyuan_model.attention import attention as hunyuan_attention
+from musubi_tuner.qwen_image.qwen_image_modules import attention
 
 import logging
 
@@ -40,94 +38,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
-EXAMPLE_DOC_STRING = """
-    Examples:
-        ```py
-        >>> import torch
-        >>> from diffusers import QwenImagePipeline
-
-        >>> pipe = QwenImagePipeline.from_pretrained("Qwen/QwenImage-20B", torch_dtype=torch.bfloat16)
-        >>> pipe.to("cuda")
-        >>> prompt = "A cat holding a sign that says hello world"
-        >>> # Depending on the variant being used, the pipeline call will slightly vary.
-        >>> # Refer to the pipeline documentation for more details.
-        >>> image = pipe(prompt, num_inference_steps=4, guidance_scale=0.0).images[0]
-        >>> image.save("qwenimage.png")
-        ```
-"""
-
-
-def calculate_shift(
-    image_seq_len,
-    base_seq_len: int = 256,
-    max_seq_len: int = 4096,
-    base_shift: float = 0.5,
-    max_shift: float = 1.15,
-):
-    m = (max_shift - base_shift) / (max_seq_len - base_seq_len)
-    b = base_shift - m * base_seq_len
-    mu = image_seq_len * m + b
-    return mu
-
-
 # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.retrieve_timesteps
-def retrieve_timesteps(
-    scheduler,
-    num_inference_steps: Optional[int] = None,
-    device: Optional[Union[str, torch.device]] = None,
-    timesteps: Optional[List[int]] = None,
-    sigmas: Optional[List[float]] = None,
-    **kwargs,
-):
-    r"""
-    Calls the scheduler's `set_timesteps` method and retrieves timesteps from the scheduler after the call. Handles
-    custom timesteps. Any kwargs will be supplied to `scheduler.set_timesteps`.
-
-    Args:
-        scheduler (`SchedulerMixin`):
-            The scheduler to get timesteps from.
-        num_inference_steps (`int`):
-            The number of diffusion steps used when generating samples with a pre-trained model. If used, `timesteps`
-            must be `None`.
-        device (`str` or `torch.device`, *optional*):
-            The device to which the timesteps should be moved to. If `None`, the timesteps are not moved.
-        timesteps (`List[int]`, *optional*):
-            Custom timesteps used to override the timestep spacing strategy of the scheduler. If `timesteps` is passed,
-            `num_inference_steps` and `sigmas` must be `None`.
-        sigmas (`List[float]`, *optional*):
-            Custom sigmas used to override the timestep spacing strategy of the scheduler. If `sigmas` is passed,
-            `num_inference_steps` and `timesteps` must be `None`.
-
-    Returns:
-        `Tuple[torch.Tensor, int]`: A tuple where the first element is the timestep schedule from the scheduler and the
-        second element is the number of inference steps.
-    """
-    if timesteps is not None and sigmas is not None:
-        raise ValueError("Only one of `timesteps` or `sigmas` can be passed. Please choose one to set custom values")
-    if timesteps is not None:
-        accepts_timesteps = "timesteps" in set(inspect.signature(scheduler.set_timesteps).parameters.keys())
-        if not accepts_timesteps:
-            raise ValueError(
-                f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
-                f" timestep schedules. Please check whether you are using the correct scheduler."
-            )
-        scheduler.set_timesteps(timesteps=timesteps, device=device, **kwargs)
-        timesteps = scheduler.timesteps
-        num_inference_steps = len(timesteps)
-    elif sigmas is not None:
-        accept_sigmas = "sigmas" in set(inspect.signature(scheduler.set_timesteps).parameters.keys())
-        if not accept_sigmas:
-            raise ValueError(
-                f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
-                f" sigmas schedules. Please check whether you are using the correct scheduler."
-            )
-        scheduler.set_timesteps(sigmas=sigmas, device=device, **kwargs)
-        timesteps = scheduler.timesteps
-        num_inference_steps = len(timesteps)
-    else:
-        scheduler.set_timesteps(num_inference_steps, device=device, **kwargs)
-        timesteps = scheduler.timesteps
-    return timesteps, num_inference_steps
 
 
 def get_timestep_embedding(
@@ -250,26 +161,16 @@ class Timesteps(nn.Module):
 
 
 class QwenTimestepProjEmbeddings(nn.Module):
-    def __init__(self, embedding_dim, use_additional_t_cond=False):
+    def __init__(self, embedding_dim):
         super().__init__()
 
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0, scale=1000)
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
-        self.use_additional_t_cond = use_additional_t_cond
-        if use_additional_t_cond:
-            self.addition_t_embedding = nn.Embedding(2, embedding_dim)
 
-    def forward(self, timestep, hidden_states, addition_t_cond=None):
+    def forward(self, timestep, hidden_states):
         timesteps_proj = self.time_proj(timestep)
         timesteps_emb = self.timestep_embedder(timesteps_proj.to(dtype=hidden_states.dtype))  # (N, D)
         conditioning = timesteps_emb
-
-        if self.use_additional_t_cond:
-            if addition_t_cond is None:
-                raise ValueError("When additional_t_cond is True, addition_t_cond must be provided.")
-            addition_t_emb = self.addition_t_embedding(addition_t_cond)
-            addition_t_emb = addition_t_emb.to(dtype=hidden_states.dtype)
-            conditioning = conditioning + addition_t_emb
 
         return conditioning
 
@@ -356,74 +257,6 @@ class QwenEmbedRope(nn.Module):
         freqs_neg = self.neg_freqs.split([x // 2 for x in self.axes_dim], dim=1)
 
         freqs_frame = freqs_pos[0][idx : idx + frame].view(frame, 1, 1, -1).expand(frame, height, width, -1)
-        if self.scale_rope:
-            freqs_height = torch.cat([freqs_neg[1][-(height - height // 2) :], freqs_pos[1][: height // 2]], dim=0)
-            freqs_height = freqs_height.view(1, height, 1, -1).expand(frame, height, width, -1)
-            freqs_width = torch.cat([freqs_neg[2][-(width - width // 2) :], freqs_pos[2][: width // 2]], dim=0)
-            freqs_width = freqs_width.view(1, 1, width, -1).expand(frame, height, width, -1)
-        else:
-            freqs_height = freqs_pos[1][:height].view(1, height, 1, -1).expand(frame, height, width, -1)
-            freqs_width = freqs_pos[2][:width].view(1, 1, width, -1).expand(frame, height, width, -1)
-
-        freqs = torch.cat([freqs_frame, freqs_height, freqs_width], dim=-1).reshape(seq_lens, -1)
-        return freqs.clone().contiguous()
-
-
-class QwenEmbedLayer3DRope(QwenEmbedRope):
-    def __init__(self, theta: int, axes_dim: List[int], scale_rope=False):
-        super().__init__(theta, axes_dim, scale_rope)
-
-    def forward(self, video_fhw, txt_seq_lens, device):
-        """
-        Args: video_fhw: [frame, height, width] a list of 3 integers representing the shape of the video Args:
-        txt_length: [bs] a list of 1 integers representing the length of the text
-        """
-        if self.pos_freqs.device != device:
-            self.pos_freqs = self.pos_freqs.to(device)
-            self.neg_freqs = self.neg_freqs.to(device)
-
-        if isinstance(video_fhw, list):
-            video_fhw = video_fhw[0]
-        if not isinstance(video_fhw, list):
-            video_fhw = [video_fhw]
-
-        vid_freqs = []
-        max_vid_index = 0
-        layer_num = len(video_fhw) - 1
-        for idx, fhw in enumerate(video_fhw):
-            frame, height, width = fhw
-            is_cond = idx == layer_num
-            rope_key = f"{is_cond}_{idx}_{height}_{width}"
-            if rope_key not in self.rope_cache:
-                if not is_cond:
-                    video_freq = self._compute_video_freqs(frame, height, width, idx)
-                else:
-                    ### For the condition image, we set the layer index to -1
-                    video_freq = self._compute_condition_freqs(frame, height, width)
-                self.rope_cache[rope_key] = video_freq
-            video_freq = self.rope_cache[rope_key]
-            video_freq = video_freq.to(device)
-            vid_freqs.append(video_freq)
-
-            if self.scale_rope:
-                max_vid_index = max(height // 2, width // 2, max_vid_index)
-            else:
-                max_vid_index = max(height, width, max_vid_index)
-
-        max_vid_index = max(max_vid_index, layer_num)
-        max_len = max(txt_seq_lens)
-        txt_freqs = self.pos_freqs[max_vid_index : max_vid_index + max_len, ...]
-        vid_freqs = torch.cat(vid_freqs, dim=0)
-
-        return vid_freqs, txt_freqs
-
-    # @functools.lru_cache(maxsize=None)
-    def _compute_condition_freqs(self, frame, height, width):
-        seq_lens = frame * height * width
-        freqs_pos = self.pos_freqs.split([x // 2 for x in self.axes_dim], dim=1)
-        freqs_neg = self.neg_freqs.split([x // 2 for x in self.axes_dim], dim=1)
-
-        freqs_frame = freqs_neg[0][-1:].view(frame, 1, 1, -1).expand(frame, height, width, -1)
         if self.scale_rope:
             freqs_height = torch.cat([freqs_neg[1][-(height - height // 2) :], freqs_pos[1][: height // 2]], dim=0)
             freqs_height = freqs_height.view(1, height, 1, -1).expand(frame, height, width, -1)
@@ -832,7 +665,7 @@ class Attention(nn.Module):
         qkv = [joint_query, joint_key, joint_value]
         org_dtype = joint_query.dtype
         del joint_query, joint_key, joint_value
-        joint_hidden_states = hunyuan_attention(
+        joint_hidden_states = attention(
             qkv, mode=self.attn_mode, attn_mask=attention_mask, total_len=total_len if self.split_attn else None
         )
         # joint_hidden_states: [B, S, H*D]
@@ -893,7 +726,6 @@ class QwenImageTransformerBlock(nn.Module):
         eps: float = 1e-6,
         attn_mode: str = "torch",
         split_attn: bool = False,
-        zero_cond_t: bool = False,
     ):
         super().__init__()
 
@@ -937,40 +769,15 @@ class QwenImageTransformerBlock(nn.Module):
         self.txt_norm2 = nn.LayerNorm(dim, elementwise_affine=False, eps=eps)
         self.txt_mlp = FeedForward(dim=dim, dim_out=dim, activation_fn="gelu-approximate")
 
-        self.zero_cond_t = zero_cond_t
-
-    def _modulate(self, x, mod_params, timestep_zero_index: Optional[int] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _modulate(self, x, mod_params) -> Tuple[torch.Tensor, torch.Tensor]:
         """Apply modulation to input tensor"""
-        # x: [b, l, d], shift/scale/gate: [b, d] (or [2*b, d] when `zero_cond_t=True`)
+        # x: [b, l, d], shift/scale/gate: [b, d]
         shift, scale, gate = mod_params.chunk(3, dim=-1)
 
-        if timestep_zero_index is not None:
-            actual_batch = shift.size(0) // 2
-            shift_base, shift_ext = shift[:actual_batch], shift[actual_batch:]
-            scale_base, scale_ext = scale[:actual_batch], scale[actual_batch:]
-            gate_base, gate_ext = gate[:actual_batch], gate[actual_batch:]
-
-            shift_base = shift_base.unsqueeze(1)
-            shift_ext = shift_ext.unsqueeze(1)
-            scale_base = scale_base.unsqueeze(1)
-            scale_ext = scale_ext.unsqueeze(1)
-            gate_base = gate_base.unsqueeze(1)
-            gate_ext = gate_ext.unsqueeze(1)
-
-            return torch.cat(
-                [
-                    x[:, :timestep_zero_index] * (1 + scale_base) + shift_base,
-                    x[:, timestep_zero_index:] * (1 + scale_ext) + shift_ext,
-                ],
-                dim=1,
-            ), torch.cat(
-                [gate_base.expand(-1, timestep_zero_index, -1), gate_ext.expand(-1, x.size(1) - timestep_zero_index, -1)], dim=1
-            )
-        else:
-            shift_result = shift.unsqueeze(1)
-            scale_result = scale.unsqueeze(1)
-            gate_result = gate.unsqueeze(1)
-            return x * (1 + scale_result) + shift_result, gate_result
+        shift_result = shift.unsqueeze(1)
+        scale_result = scale.unsqueeze(1)
+        gate_result = gate.unsqueeze(1)
+        return x * (1 + scale_result) + shift_result, gate_result
 
     def forward(
         self,
@@ -981,12 +788,9 @@ class QwenImageTransformerBlock(nn.Module):
         image_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         txt_seq_lens: Optional[torch.Tensor] = None,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
-        timestep_zero_index: Optional[int] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # Get modulation parameters for both streams
         img_mod_params = self.img_mod(temb)  # [B, 6*dim]
-        if self.zero_cond_t:
-            temb = torch.chunk(temb, 2, dim=0)[0]
         txt_mod_params = self.txt_mod(temb)  # [B, 6*dim]
 
         # Split modulation parameters for norm1 and norm2
@@ -997,7 +801,7 @@ class QwenImageTransformerBlock(nn.Module):
 
         # Process image stream - norm1 + modulation
         img_normed = self.img_norm1(hidden_states)
-        img_modulated, img_gate1 = self._modulate(img_normed, img_mod1, timestep_zero_index)
+        img_modulated, img_gate1 = self._modulate(img_normed, img_mod1)
         del img_normed, img_mod1
 
         # Process text stream - norm1 + modulation
@@ -1034,7 +838,7 @@ class QwenImageTransformerBlock(nn.Module):
 
         # Process image stream - norm2 + MLP
         img_normed2 = self.img_norm2(hidden_states)
-        img_modulated2, img_gate2 = self._modulate(img_normed2, img_mod2, timestep_zero_index)
+        img_modulated2, img_gate2 = self._modulate(img_normed2, img_mod2)
         del img_normed2, img_mod2
         img_mlp_output = self.img_mlp(img_modulated2)
         del img_modulated2
@@ -1087,8 +891,6 @@ class QwenImageTransformer2DModel(nn.Module):  # ModelMixin, ConfigMixin, PeftAd
             The attention implementation to use.
         split_attn (`bool`, defaults to `False`):
             Whether to split the attention computation to save memory.
-        zero_cond_t (`bool`, defaults to `False`):
-            Whether to use zero conditioning for time embeddings.
     """
 
     # _supports_gradient_checkpointing = True
@@ -1109,9 +911,6 @@ class QwenImageTransformer2DModel(nn.Module):  # ModelMixin, ConfigMixin, PeftAd
         axes_dims_rope: Tuple[int, int, int] = (16, 56, 56),
         attn_mode: str = "torch",
         split_attn: bool = False,
-        zero_cond_t: bool = False,
-        use_additional_t_cond: bool = False,
-        use_layer3d_rope: bool = False,
     ):
         super().__init__()
         self.in_channels = in_channels
@@ -1120,12 +919,9 @@ class QwenImageTransformer2DModel(nn.Module):  # ModelMixin, ConfigMixin, PeftAd
         self.attn_mode = attn_mode
         self.split_attn = split_attn
 
-        if not use_layer3d_rope:
-            self.pos_embed = QwenEmbedRope(theta=10000, axes_dim=list(axes_dims_rope), scale_rope=True)
-        else:
-            self.pos_embed = QwenEmbedLayer3DRope(theta=10000, axes_dim=list(axes_dims_rope), scale_rope=True)
+        self.pos_embed = QwenEmbedRope(theta=10000, axes_dim=list(axes_dims_rope), scale_rope=True)
 
-        self.time_text_embed = QwenTimestepProjEmbeddings(embedding_dim=self.inner_dim, use_additional_t_cond=use_additional_t_cond)
+        self.time_text_embed = QwenTimestepProjEmbeddings(embedding_dim=self.inner_dim)
 
         self.txt_norm = RMSNorm(joint_attention_dim, eps=1e-6)
 
@@ -1140,7 +936,6 @@ class QwenImageTransformer2DModel(nn.Module):  # ModelMixin, ConfigMixin, PeftAd
                     attention_head_dim=attention_head_dim,
                     attn_mode=attn_mode,
                     split_attn=split_attn,
-                    zero_cond_t=zero_cond_t,
                 )
                 for _ in range(num_layers)
             ]
@@ -1150,7 +945,6 @@ class QwenImageTransformer2DModel(nn.Module):  # ModelMixin, ConfigMixin, PeftAd
         self.proj_out = nn.Linear(self.inner_dim, patch_size * patch_size * self.out_channels, bias=True)
 
         self.gradient_checkpointing = False
-        self.zero_cond_t = zero_cond_t
         self.activation_cpu_offloading = False
 
         # offloading
@@ -1232,7 +1026,6 @@ class QwenImageTransformer2DModel(nn.Module):  # ModelMixin, ConfigMixin, PeftAd
         txt_seq_lens: Optional[List[int]] = None,
         guidance: torch.Tensor = None,  # TODO: this should probably be removed
         attention_kwargs: Optional[Dict[str, Any]] = None,
-        additional_t_cond=None,
     ) -> torch.Tensor:
         """
         The [`QwenTransformer2DModel`] forward method.
@@ -1279,33 +1072,13 @@ class QwenImageTransformer2DModel(nn.Module):  # ModelMixin, ConfigMixin, PeftAd
 
         timestep = timestep.to(hidden_states.dtype)
 
-        if self.zero_cond_t:
-            if img_shapes is None:
-                raise ValueError("`img_shapes` must be provided when `zero_cond_t=True`.")
-
-            timestep = torch.cat([timestep, timestep * 0], dim=0)
-
-            sample = img_shapes[0]  # img_shapes always has single entry for musubi tuner
-            if isinstance(sample, (tuple, list)) and len(sample) == 3 and all(isinstance(x, numbers.Integral) for x in sample):
-                base_len = int(prod(sample))
-            else:
-                if not (isinstance(sample, (tuple, list)) and len(sample) >= 1):
-                    raise ValueError("Invalid `img_shapes` entry for `zero_cond_t=True`.")
-                base = sample[0]
-                if not (isinstance(base, (tuple, list)) and len(base) == 3):
-                    raise ValueError("Invalid `img_shapes` entry for `zero_cond_t=True`.")
-                base_len = int(prod(base))
-            timestep_zero_index = base_len
-        else:
-            timestep_zero_index = None
-
         encoder_hidden_states = self.txt_norm(encoder_hidden_states)
         encoder_hidden_states = self.txt_in(encoder_hidden_states)
 
         if guidance is not None:
             guidance = guidance.to(hidden_states.dtype) * 1000
 
-        temb = self.time_text_embed(timestep, hidden_states, additional_t_cond)
+        temb = self.time_text_embed(timestep, hidden_states)
 
         image_rotary_emb = self.pos_embed(img_shapes, txt_seq_lens, device=hidden_states.device)
 
@@ -1327,7 +1100,6 @@ class QwenImageTransformer2DModel(nn.Module):  # ModelMixin, ConfigMixin, PeftAd
                     image_rotary_emb,
                     txt_seq_lens,
                     attention_kwargs,
-                    timestep_zero_index,
                 )
 
             else:
@@ -1339,7 +1111,6 @@ class QwenImageTransformer2DModel(nn.Module):  # ModelMixin, ConfigMixin, PeftAd
                     image_rotary_emb=image_rotary_emb,
                     txt_seq_lens=txt_seq_lens,
                     joint_attention_kwargs=attention_kwargs,
-                    timestep_zero_index=timestep_zero_index,
                 )
 
             if self.blocks_to_swap:
@@ -1347,9 +1118,6 @@ class QwenImageTransformer2DModel(nn.Module):  # ModelMixin, ConfigMixin, PeftAd
 
         if input_device != hidden_states.device:
             hidden_states = hidden_states.to(input_device)
-
-        if self.zero_cond_t:
-            temb = temb.chunk(2, dim=0)[0]
 
         # Use only the image part (hidden_states) from the dual-stream blocks
         hidden_states = self.norm_out(hidden_states, temb)
@@ -1375,15 +1143,12 @@ FP8_OPTIMIZATION_EXCLUDE_KEYS = [
 def create_model(
     attn_mode: str,
     split_attn: bool,
-    zero_cond_t: bool,
-    use_additional_t_cond: bool,
-    use_layer3d_rope: bool,
     dtype: Optional[torch.dtype],
     num_layers: Optional[int] = 60,
 ) -> QwenImageTransformer2DModel:
     with init_empty_weights():
         logger.info(
-            f"Creating QwenImageTransformer2DModel. Attn mode: {attn_mode}, split_attn: {split_attn}, zero_cond_t: {zero_cond_t}, num_layers: {num_layers} "
+            f"Creating QwenImageTransformer2DModel. Attn mode: {attn_mode}, split_attn: {split_attn}, num_layers: {num_layers} "
         )
         """
         {
@@ -1419,9 +1184,6 @@ def create_model(
             axes_dims_rope=(16, 56, 56),
             attn_mode=attn_mode,
             split_attn=split_attn,
-            zero_cond_t=zero_cond_t,
-            use_additional_t_cond=use_additional_t_cond,
-            use_layer3d_rope=use_layer3d_rope,
         )
         if dtype is not None:
             model.to(dtype)
@@ -1433,9 +1195,6 @@ def load_qwen_image_model(
     dit_path: str,
     attn_mode: str,
     split_attn: bool,
-    zero_cond_t: bool,
-    use_additional_t_cond: bool,
-    use_layer3d_rope: bool,
     loading_device: Union[str, torch.device],
     dit_weight_dtype: Optional[torch.dtype],
     fp8_scaled: bool = False,
@@ -1452,9 +1211,6 @@ def load_qwen_image_model(
         dit_path (str): Path to the DiT model checkpoint.
         attn_mode (str): Attention mode to use, e.g., "torch", "flash", etc.
         split_attn (bool): Whether to use split attention.
-        zero_cond_t (bool): Whether the model uses zero conditioning for time embeddings.
-        use_additional_t_cond (bool): Whether to use additional time conditioning (for layered model).
-        use_layer3d_rope (bool): Whether to use 3D RoPE (for layered model).
         loading_device (Union[str, torch.device]): Device to load the model weights on.
         dit_weight_dtype (Optional[torch.dtype]): Data type of the DiT weights.
             If None, it will be loaded as is (same as the state_dict) or scaled for fp8. if not None, model weights will be casted to this dtype.
@@ -1470,9 +1226,7 @@ def load_qwen_image_model(
     device = torch.device(device)
     loading_device = torch.device(loading_device)
 
-    model = create_model(
-        attn_mode, split_attn, zero_cond_t, use_additional_t_cond, use_layer3d_rope, dit_weight_dtype, num_layers=num_layers
-    )
+    model = create_model(attn_mode, split_attn, dit_weight_dtype, num_layers=num_layers)
 
     # load model weights with dynamic fp8 optimization and LoRA merging if needed
     logger.info(f"Loading DiT model from {dit_path}, device={loading_device}")
@@ -1493,10 +1247,6 @@ def load_qwen_image_model(
     for key in list(sd.keys()):
         if key.startswith("model.diffusion_model."):
             sd[key[22:]] = sd.pop(key)
-
-    if "__index_timestep_zero__" in sd:  # ComfyUI flag for edit-2511
-        assert zero_cond_t, "Found __index_timestep_zero__ in state_dict, the model must be '2511' variant."
-        sd.pop("__index_timestep_zero__")
 
     if fp8_scaled:
         apply_fp8_monkey_patch(model, sd, use_scaled_mm=False)
