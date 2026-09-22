@@ -1,0 +1,24 @@
+# Общие настройки всех наборов изображений.
+[general]
+
+# === Разрешение и группировка по пропорциям ===
+resolution = [1024, 1024]
+enable_bucket = true
+bucket_no_upscale = true
+
+# === Текстовые подписи ===
+# Картинка и подпись: 001.png + 001.txt. Подпись — описание и ваш триггер.
+caption_extension = ".txt"
+
+# === Размер батча и повторы ===
+batch_size = 1
+num_repeats = 1
+
+# === Обучающий набор: изображения и кэш ===
+[[datasets]]
+# ЗАМЕНИТЬ путь на папку с обучающими изображениями и подписями.
+image_directory = "D:/AI/datasets/qwen_image/train"
+cache_directory = "qwen_image_lora/cache/train"
+
+# Для дополнительного набора добавьте [[datasets]] с отдельными
+# image_directory и cache_directory; num_repeats регулирует его вес.
