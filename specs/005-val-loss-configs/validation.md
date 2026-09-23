@@ -127,3 +127,20 @@ The existing parsed-example CPU chain produced six real TensorBoard metrics at s
 
 The focused test passed on its first run because the production behavior was already implemented: **1 passed in 8.28s**. The full example test file passed **16 tests in 10.36s**; Ruff passed. No production code, GPU, or model weights were changed or used.
 
+## 2026-09-24 revision: one training command prepares caches
+
+The user replaced the earlier four manual cache commands with `python qwen_image_train_network.py --config_file <root>/train.toml`. The automatic cache path was already written before this SpecKit revision. This section records the subsequent artifact update and local verification; it does not retroactively describe the original implementation as spec-first.
+
+The Qwen trainer now preflights the train and validation source declarations before cache subprocesses can load weights. It then runs the existing latent and text cache entrypoints for each configured dataset, using effective TOML paths. Cache encoders run in child processes, serialized by a lock; rank environment variables are removed from those children. Existing train files are skipped, missing files are encoded, and a typed validation-cache error triggers a validation-only rebuild before DiT loading. No training loss, noise, optimizer, or scheduler code was edited in this revision.
+
+Local Python 3.12 checks used `C:/Users/inbox/Desktop/musubi-tuner-flux2dev-lora/.venv/Scripts/python.exe` with `PYTHONPATH=src`, `CUDA_VISIBLE_DEVICES=-1`, `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, and `WANDB_MODE=disabled`:
+
+- Focused cache and trainer checks: `pytest -p no:cacheprovider -q --tb=short tests/test_qwen_image_dataset_cache.py tests/test_qwen_image_val_example.py -k 'training_command or qwen_cache_cli_skips_existing_and_encodes_missing'` → **6 passed, 62 deselected**.
+- Real TOML to cache-dispatch check from another CWD: `pytest -p no:cacheprovider -q --tb=short tests/test_qwen_image_val_example.py -k one_config_command_dispatches_caches_from_effective_toml` → **1 passed, 18 deselected**.
+- Early source-error and cache CLI regression checks after correction: **28 passed, 179 deselected**. These cover invalid training roles and sources, cache bucket/path validation, and existing manual cache selectors.
+- Broader affected Qwen suite (nine modules, excluding two tests that still refer to the removed `config_for_qwen_image_lora` template): **418 passed, 1 skipped, 2 deselected**. The one PyTorch scheduler warning is pre-existing.
+- Current example suite excluding four tests tied to the prior numerical template contract: **15 passed, 4 deselected**.
+- Ruff on changed Python files, Python compile check, and `git diff --check` passed.
+
+The unfiltered checks exposed existing drift outside the one-command cache change. The physical `qwen_image_lora_val_example/train.toml` now uses rank/alpha 32, 5,000 steps, 50-step cadence, `val_seed_noise_n=2`, and an extra `log_prefix`; the Stage 4 spec and old example tests require rank/alpha 16, 1,600 steps, 200-step cadence, and `val_seed_noise_n=1`. `train-dataset.toml` uses batch size 16 versus FR-005's 1. Two legacy config tests still read the removed `config_for_qwen_image_lora/` files. These tests were not rewritten to accept different numerical requirements; final convergence must record the discrepancies. The first unfiltered example run had 9 failures and 131 passes; after cache-test updates, four template-contract failures remain. No full Qwen model, GPU training, download, or server verification ran during this local revision.
+

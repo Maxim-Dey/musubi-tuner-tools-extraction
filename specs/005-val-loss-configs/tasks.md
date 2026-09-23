@@ -79,3 +79,19 @@ Deliver US1 as the MVP physical example and reader gate. Then prove US2's comman
 
 - [X] T018 LOW: In docs/qwen_image.md, scope the Japanese instruction to run from repository root to legacy commands without experiment_dir, and state that the portable example's absolute REPO/ROOT commands can run from another CWD; preserve the supported command contract per FR-008 and FR-009 (partial).
 - [X] T019 MEDIUM: Extend the existing parsed-example CPU test in tests/test_qwen_image_val_example.py to prove its real six-metric event selects exactly one complete best package and its configured save_last_n_steps=1000 retains a complete current package at the inclusive X-1000 boundary while removing an older owned current package. Reuse Stage 3 package/retention seams without a new harness or extra training updates, per FR-004, FR-010, FR-012 and SC-005 (partial evidence).
+
+## Phase 8: Single-command cache preparation revision (2026-09-24)
+
+**Scope**: The user replaced the original four manual cache commands with one Qwen training command. The code was written before this SpecKit revision; verify it against the amended requirement before marking tasks complete. Earlier checked tasks record the original delivery and are not rewritten.
+
+- [X] T020 [US2] Check `src/musubi_tuner/qwen_image_train_network.py`, both Qwen cache entrypoints, `tests/test_qwen_image_config.py`, `tests/test_qwen_image_dataset_cache.py`, and `tests/test_qwen_image_val_example.py`: one effective `--config_file` launch must reject invalid sources before loading cache weights, prepare latent/text caches for every configured train/validation dataset, skip complete train caches without loading encoders, encode missing files, and rebuild stale validation caches before DiT loading (FR-008, FR-012, SC-007, Constitution VI).
+- [X] T021 [US2] Verify cache subprocess isolation and compatibility in `src/musubi_tuner/qwen_image_train_network.py`: serial encoder loading must leave parent training RNG and model state untouched; concurrent ranks must not race or form an unintended cache process group; running without `--config_file` must keep legacy behavior (FR-013, Constitution III–V). Local verification covers subprocess/environment and locking behavior; real multi-rank operation remains in Stage 5.
+- [X] T022 [US2] Align `README.md`, `docs/qwen_image.md`, `specs/005-val-loss-configs/contracts/example-cli.md`, and `quickstart.md` with the ordinary one-command path, including existing/missing/stale-validation cache behavior and from-another-CWD paths; retain truthful manual-cache and resume documentation (FR-008, FR-009, FR-012).
+- [X] T023 Run focused Python 3.12 CPU tests and relevant regression checks; record exact results and any unavailable full-model/GPU check in `specs/005-val-loss-configs/validation.md`. Compare the amended spec, plan, tasks, and code before running final convergence (FR-012, FR-013, SC-007, Constitution VII).
+
+**Dependency**: T020 and T021 establish behavior; T022 follows the verified interface; T023 closes local verification. Do not load full Qwen weights or launch GPU training in this local stage.
+
+## Phase 9: Convergence
+
+- [ ] T024 HIGH: Reconcile the shipped `qwen_image_lora_val_example/train.toml`, `train-dataset.toml`, `docs/qwen_image.md`, and Stage 4 example tests with the exact numerical example contract in FR-003, FR-005, FR-010 and SC-004; current rank, step, cadence, batch, and validation-noise values contradict that contract. Preserve the original agreed values unless the user explicitly amends the requirement (contradicts).
+- [ ] T025 HIGH: After T024, replace references to the removed `config_for_qwen_image_lora/train.toml` and `sample_prompts.txt` in `tests/test_qwen_image_config.py` with supported physical example inputs while retaining the original parser, prompt, and exact-value assertions, then rerun the unfiltered Stage 4 CPU suite per FR-012 and Constitution VII (partial).

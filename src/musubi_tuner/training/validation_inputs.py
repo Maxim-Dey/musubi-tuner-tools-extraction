@@ -40,6 +40,10 @@ ROLES = ("val_familiar", "val_unfamiliar")
 _LATENT_KEY = re.compile(r"latents_(\d+)x(\d+)x(\d+)_(.+)")
 
 
+class InvalidValidationCacheError(ValueError):
+    """A validation cache is missing, stale, or unreadable."""
+
+
 @dataclass(frozen=True)
 class ValidationItem:
     role: str
@@ -100,7 +104,7 @@ def _require_cache(
     caption: str,
 ) -> torch.Tensor:
     if not path.is_file():
-        raise ValueError(f"{label}: {kind} cache {path} is missing; rebuild this Qwen validation cache")
+        raise InvalidValidationCacheError(f"{label}: {kind} cache {path} is missing; rebuild this Qwen validation cache")
     try:
         with safe_open(str(path), framework="pt", device="cpu") as cache:
             metadata = cache.metadata() or {}
@@ -143,9 +147,9 @@ def _require_cache(
             if not torch.isfinite(tensor.float()).all():
                 raise ValueError("nonfinite tensor values; rebuild the cache")
     except ValueError as error:
-        raise ValueError(f"{label}: {kind} cache {path}: {error}") from error
+        raise InvalidValidationCacheError(f"{label}: {kind} cache {path}: {error}") from error
     except Exception as error:
-        raise ValueError(f"{label}: {kind} cache {path} is invalid or corrupt safetensors; rebuild it: {error}") from error
+        raise InvalidValidationCacheError(f"{label}: {kind} cache {path} is invalid or corrupt safetensors; rebuild it: {error}") from error
     return tensor
 
 

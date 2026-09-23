@@ -86,13 +86,42 @@ def test_role_dataset_reaches_cache_model_only_after_preflight(tmp_path, monkeyp
 
 
 @pytest.mark.parametrize("module", [qwen_image_cache_latents, qwen_image_cache_text_encoder_outputs])
-def test_role_cache_skip_existing_rejected_before_model(tmp_path, monkeypatch, module):
-    declaration, _, _ = role_declaration(tmp_path)
-    config, reached = run_cache_preflight(tmp_path, monkeypatch, declaration, module, ["--skip_existing"])
-    with pytest.raises(ValueError, match="skip_existing") as error:
-        module.main()
-    assert str(config) in str(error.value)
+@pytest.mark.parametrize("role_aware", [False, True])
+def test_qwen_cache_cli_skips_existing_and_encodes_missing(tmp_path, monkeypatch, module, role_aware):
+    if role_aware:
+        declaration, _, _ = role_declaration(tmp_path)
+    else:
+        images = image_source(tmp_path / "train")
+        declaration = {
+            "general": {"resolution": 64, "caption_extension": ".txt", "batch_size": 1, "num_repeats": 1},
+            "datasets": [{"image_directory": str(images), "cache_directory": str(tmp_path / "train_cache")}],
+        }
+    config, reached = run_cache_preflight(tmp_path, monkeypatch, declaration, module)
+    cache_files = []
+    for entry in declaration["datasets"]:
+        directory = Path(entry["cache_directory"])
+        directory.mkdir()
+        for name in ("a", "b"):
+            filename = f"{name}_0064x0064_qi.safetensors" if module is qwen_image_cache_latents else f"{name}_qi_te.safetensors"
+            cache_file = directory / filename
+            cache_file.write_bytes(b"existing cache")
+            cache_files.append(cache_file)
+
+    module.main()
     assert reached == []
+    assert all(path.read_bytes() == b"existing cache" for path in cache_files)
+
+    monkeypatch.setattr(sys, "argv", [*sys.argv, "--rebuild"])
+    with pytest.raises(RuntimeError, match="model boundary"):
+        module.main()
+    assert reached == [True]
+
+    reached.clear()
+    monkeypatch.setattr(sys, "argv", sys.argv[:-1])
+    cache_files[0].unlink()
+    with pytest.raises(RuntimeError, match="model boundary"):
+        module.main()
+    assert reached == [True]
 
 
 @pytest.mark.parametrize("module", [qwen_image_cache_latents, qwen_image_cache_text_encoder_outputs])

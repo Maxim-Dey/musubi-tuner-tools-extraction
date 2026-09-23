@@ -7,8 +7,11 @@ import inspect
 import math
 import os
 import random
+import subprocess
 import sys
+import tempfile
 from contextlib import contextmanager
+from hashlib import sha256
 from pathlib import Path
 import re
 from typing import Optional
@@ -19,6 +22,7 @@ import toml
 import torch
 from tqdm import tqdm
 from accelerate import Accelerator
+from filelock import FileLock
 
 from musubi_tuner.dataset.image_video_dataset import (
     ARCHITECTURE_QWEN_IMAGE,
@@ -63,16 +67,30 @@ logging.basicConfig(level=logging.INFO)
 
 
 class QwenImageNetworkTrainer(NetworkTrainer):
-    def __init__(self):
+    def __init__(self, *, auto_cache: bool = False):
         super().__init__()
+        self.auto_cache = auto_cache
 
     def validate_training_inputs(self, args):
         if getattr(args, "experiment_dir", None) is not None:
             _prepare_experiment_training_inputs(args)
         validate_training_args(args)
+        if self.auto_cache and getattr(args, "_selected_train_config_path", None) and not args.show_timesteps:
+            _preflight_cache_sources(args)
+            _ensure_qwen_image_caches(args)
         if getattr(args, "_experiment_root", None):
-            from musubi_tuner.training.validation_inputs import prepare_validation_inputs
+            self._prepare_validation_manifest(args)
 
+    def _prepare_validation_manifest(self, args):
+        from musubi_tuner.training.validation_inputs import InvalidValidationCacheError, prepare_validation_inputs
+
+        try:
+            self.validation_manifest = prepare_validation_inputs(args)
+        except InvalidValidationCacheError:
+            if not (self.auto_cache and getattr(args, "_selected_train_config_path", None)):
+                raise
+            logger.info("Rebuilding outdated validation caches for %s", args.val_dataset_config)
+            _ensure_qwen_image_caches(args, dataset_configs=(args.val_dataset_config,), rebuild=True)
             self.validation_manifest = prepare_validation_inputs(args)
 
     def validate_training_dataset(self, args, dataset):
@@ -87,9 +105,7 @@ class QwenImageNetworkTrainer(NetworkTrainer):
             steps = args.max_train_epochs * math.ceil(len(dataset) / processes / args.gradient_accumulation_steps)
         validate_scheduler_args(args, steps * processes)
         if getattr(args, "val_dataset_config", None) and getattr(self, "validation_manifest", None) is None:
-            from musubi_tuner.training.validation_inputs import prepare_validation_inputs
-
-            self.validation_manifest = prepare_validation_inputs(args)
+            self._prepare_validation_manifest(args)
 
     # region model specific
 
@@ -482,6 +498,72 @@ class QwenImageNetworkTrainer(NetworkTrainer):
         return payload
 
     # endregion model specific
+
+
+def _preflight_cache_sources(args) -> None:
+    """Reject invalid source declarations before cache subprocesses load weights."""
+    from musubi_tuner.dataset import config_utils
+    from musubi_tuner.dataset.config_utils import BlueprintGenerator, ConfigSanitizer
+
+    for config_path, is_training in (
+        (args.dataset_config, True), (getattr(args, "val_dataset_config", None), False),
+    ):
+        if not config_path:
+            continue
+        user_config = config_utils.load_user_config(config_path, experiment_root=getattr(args, "_experiment_root", None))
+        source_args = argparse.Namespace(**vars(args))
+        source_args.dataset_config = config_path
+        blueprint = BlueprintGenerator(ConfigSanitizer()).generate(
+            user_config, source_args, architecture=ARCHITECTURE_QWEN_IMAGE
+        )
+        group = config_utils.generate_dataset_group_by_blueprint(
+            blueprint.dataset_group, seed=0, experiment_root=getattr(args, "_experiment_root", None)
+        )
+        if is_training and any(dataset.role is not None for dataset in group.datasets):
+            raise ValueError(
+                f"{config_path}: validation role is not accepted as training data; "
+                "put these sets in val_dataset_config and keep dataset_config for training only"
+            )
+        config_utils.validate_dataset_sources(group, config_path)
+        if not is_training:
+            config_utils.validate_role_aware_sources(group, config_path)
+
+
+def _ensure_qwen_image_caches(args, *, dataset_configs=None, rebuild: bool = False) -> None:
+    """Fill missing Qwen caches from the effective training configuration."""
+    selected = args._selected_train_config_path
+    lock_name = sha256(selected.encode("utf-8")).hexdigest()[:16]
+    lock_path = Path(tempfile.gettempdir()) / f"musubi-qwen-cache-{lock_name}.lock"
+    workers = max(1, int(args.max_data_loader_n_workers or 1))
+    cache_env = os.environ.copy()
+    for key in ("RANK", "LOCAL_RANK", "WORLD_SIZE", "LOCAL_WORLD_SIZE", "GROUP_RANK", "MASTER_ADDR", "MASTER_PORT"):
+        cache_env.pop(key, None)
+
+    with FileLock(str(lock_path)):
+        for dataset_config in dataset_configs or (args.dataset_config, getattr(args, "val_dataset_config", None)):
+            if not dataset_config:
+                continue
+            for module, checkpoint_option, checkpoint in (
+                ("musubi_tuner.qwen_image_cache_latents", "--vae", args.vae),
+                ("musubi_tuner.qwen_image_cache_text_encoder_outputs", "--text_encoder", args.text_encoder),
+            ):
+                if not checkpoint:
+                    raise ValueError(f"{selected}: {checkpoint_option[2:]} is required for automatic caching")
+                command = [
+                    sys.executable, "-m", module,
+                    "--train_config", selected,
+                    "--dataset_config", dataset_config,
+                    checkpoint_option, checkpoint,
+                    "--num_workers", str(workers),
+                ]
+                if getattr(args, "experiment_dir", None):
+                    command.extend(("--experiment_dir", args.experiment_dir))
+                if module.endswith("text_encoder_outputs") and args.fp8_vl:
+                    command.append("--fp8_vl")
+                if rebuild:
+                    command.append("--rebuild")
+                logger.info("Checking %s caches for %s", "latent" if checkpoint_option == "--vae" else "text", dataset_config)
+                subprocess.run(command, check=True, env=cache_env)
 
 
 def _prepare_experiment_training_inputs(args) -> None:
@@ -1018,7 +1100,7 @@ def main():
 
     qwen_image_utils.resolve_model_version_args(args)
 
-    trainer = QwenImageNetworkTrainer()
+    trainer = QwenImageNetworkTrainer(auto_cache=True)
     trainer.train(args)
 
 

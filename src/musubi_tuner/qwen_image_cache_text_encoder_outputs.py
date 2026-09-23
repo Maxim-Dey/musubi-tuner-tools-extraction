@@ -107,11 +107,9 @@ def main():
     config_utils.validate_dataset_sources(train_dataset_group, args.dataset_config)
     config_utils.validate_role_aware_sources(train_dataset_group, args.dataset_config)
     datasets = train_dataset_group.datasets
-    if args.skip_existing and any(dataset.role is not None for dataset in datasets):
-        raise ValueError(
-            f"{args.dataset_config}: --skip_existing cannot verify validation source bindings; "
-            "rebuild role-bearing caches without this flag"
-        )
+    if args.skip_existing and args.rebuild:
+        parser.error("--skip_existing and --rebuild cannot be used together")
+    args.skip_existing = not args.rebuild
 
     # define accelerator for fp8 inference
     vl_dtype = torch.float8_e4m3fn if args.fp8_vl else torch.bfloat16
@@ -122,17 +120,16 @@ def main():
     # prepare cache files and paths: all_cache_files_for_dataset = exisiting cache files, all_cache_paths_for_dataset = all cache paths in the dataset
     all_cache_files_for_dataset, all_cache_paths_for_dataset = cache_text_encoder_outputs.prepare_cache_files_and_paths(datasets)
 
-    # Load Qwen2.5-VL
-    logger.info(f"Loading Qwen2.5-VL: {args.text_encoder}")
-    tokenizer, text_encoder = qwen_image_utils.load_qwen2_5_vl(
-        ckpt_path=args.text_encoder, dtype=vl_dtype, device=device, disable_mmap=True
-    )
-
-    # Encode with Qwen2.5-VL
-    logger.info("Encoding with Qwen2.5-VL")
+    tokenizer = text_encoder = None
 
     def encode_for_text_encoder(batch: list[ItemInfo]):
-        nonlocal tokenizer, text_encoder, device, accelerator, args
+        nonlocal tokenizer, text_encoder
+        if text_encoder is None:
+            logger.info(f"Loading Qwen2.5-VL: {args.text_encoder}")
+            tokenizer, text_encoder = qwen_image_utils.load_qwen2_5_vl(
+                ckpt_path=args.text_encoder, dtype=vl_dtype, device=device, disable_mmap=True
+            )
+            logger.info("Encoding with Qwen2.5-VL")
         encode_and_save_batch(tokenizer, text_encoder, batch, device, accelerator, [dataset.role for dataset in datasets])
 
     cache_text_encoder_outputs.process_text_encoder_batches(
@@ -155,6 +152,7 @@ def main():
 def qwen_image_setup_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--train_config", type=str, default=None, help="train.toml anchor for an experiment directory")
     parser.add_argument("--experiment_dir", type=str, default=None, help="portable experiment directory")
+    parser.add_argument("--rebuild", action="store_true", help="recreate existing Qwen-Image cache files")
     parser.add_argument("--text_encoder", type=str, default=None, required=True, help="Text Encoder (Qwen2.5-VL) checkpoint path")
     parser.add_argument("--fp8_vl", action="store_true", help="use fp8 for Text Encoder model")
     qwen_image_utils.add_model_version_args(parser)

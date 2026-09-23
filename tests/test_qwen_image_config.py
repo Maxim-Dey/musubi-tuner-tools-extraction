@@ -497,7 +497,7 @@ def test_unused_attention_flags_have_no_prerequisites(tmp_path, monkeypatch, inv
     training.validate_training_args(args)
 
 
-@pytest.mark.parametrize("source_kind", ["prompt", "dataset", "jsonl", "missing_caption", "empty_cache"])
+@pytest.mark.parametrize("source_kind", ["prompt", "dataset", "jsonl", "missing_caption"])
 def test_training_source_errors_precede_loaders(tmp_path, monkeypatch, invocation, source_kind):
     effects = forbid_effects(monkeypatch)
     if source_kind == "prompt":
@@ -727,7 +727,6 @@ def test_latent_bucket_dimensions_before_vae(tmp_path, monkeypatch, invocation, 
     from PIL import Image
     from musubi_tuner import qwen_image_cache_latents as cache
 
-    effects = forbid_effects(monkeypatch)
     Image.new("RGB", (size, size)).save(tmp_path / "images/one.png")
     path = Path(invocation["dataset_config"])
     config = toml.load(path)
@@ -754,7 +753,6 @@ def test_latent_bucket_dimensions_before_vae(tmp_path, monkeypatch, invocation, 
         message = str(error.value)
         assert all(part in message for part in (str(path), "dataset 1", "item 1", "one.png", "bucket", "0"))
         assert reached == []
-    assert effects == []
     assert not (tmp_path / "cache").exists()
 
 
@@ -831,11 +829,8 @@ def test_rex_scheduler_spelling_equivalence(tmp_path, monkeypatch, invocation):
 @pytest.mark.parametrize("kind", ["file", "parent_file", "ancestor_file", "new"])
 def test_cache_directory_ancestors_before_loaders(tmp_path, monkeypatch, invocation, module_name, kind):
     import importlib
-    from musubi_tuner import cache_text_encoder_outputs
 
     module = importlib.import_module("musubi_tuner." + module_name)
-    prepare_paths = cache_text_encoder_outputs.prepare_cache_files_and_paths
-    effects = forbid_effects(monkeypatch)
     parent = tmp_path / "cache-parent"
     if kind != "new":
         parent.write_text("preserve this file", encoding="utf-8")
@@ -856,8 +851,6 @@ def test_cache_directory_ancestors_before_loaders(tmp_path, monkeypatch, invocat
         raise AtLoader
 
     if kind == "new":
-        # This existing text-cache preparation only enumerates paths; keep its real implementation.
-        monkeypatch.setattr(cache_text_encoder_outputs, "prepare_cache_files_and_paths", prepare_paths)
         loader = "load_vae" if module_name.endswith("latents") else "load_qwen2_5_vl"
         monkeypatch.setattr(module.qwen_image_utils, loader, stop_at_loader)
         with pytest.raises(AtLoader):
@@ -874,4 +867,3 @@ def test_cache_directory_ancestors_before_loaders(tmp_path, monkeypatch, invocat
         assert "supply" in message
         assert reached == []
         assert parent.read_text(encoding="utf-8") == "preserve this file"
-    assert effects == []

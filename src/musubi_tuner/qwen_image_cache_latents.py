@@ -46,6 +46,7 @@ def encode_and_save_batch(
 def qwen_image_setup_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser.add_argument("--train_config", type=str, default=None, help="train.toml anchor for an experiment directory")
     parser.add_argument("--experiment_dir", type=str, default=None, help="portable experiment directory")
+    parser.add_argument("--rebuild", action="store_true", help="recreate existing Qwen-Image cache files")
     qwen_image_utils.add_model_version_args(parser)
     return parser
 
@@ -110,11 +111,9 @@ def main():
     config_utils.validate_dataset_sources(train_dataset_group, args.dataset_config)
     config_utils.validate_role_aware_sources(train_dataset_group, args.dataset_config)
     datasets = train_dataset_group.datasets
-    if args.skip_existing and any(dataset.role is not None for dataset in datasets):
-        raise ValueError(
-            f"{args.dataset_config}: --skip_existing cannot verify validation source bindings; "
-            "rebuild role-bearing caches without this flag"
-        )
+    if args.skip_existing and args.rebuild:
+        parser.error("--skip_existing and --rebuild cannot be used together")
+    args.skip_existing = not args.rebuild
 
     if args.debug_mode is not None:
         cache_latents.show_datasets(datasets, args.debug_mode, args.console_width, args.console_back, args.console_num_images)
@@ -122,12 +121,14 @@ def main():
 
     assert args.vae is not None, "VAE checkpoint is required"
 
-    logger.info(f"Loading VAE model from {args.vae}")
-    vae = qwen_image_utils.load_vae(args.vae, device=device, disable_mmap=True)
-    vae.to(device)
+    vae = None
 
-    # encoding closure
     def encode(batch: List[ItemInfo]):
+        nonlocal vae
+        if vae is None:
+            logger.info(f"Loading VAE model from {args.vae}")
+            vae = qwen_image_utils.load_vae(args.vae, device=device, disable_mmap=True)
+            vae.to(device)
         encode_and_save_batch(vae, batch, [dataset.role for dataset in datasets])
 
     # reuse core loop from cache_latents with no change

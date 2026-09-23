@@ -14,6 +14,7 @@ import toml
 import torch
 
 from musubi_tuner import qwen_image_cache_latents, qwen_image_cache_text_encoder_outputs
+from musubi_tuner import qwen_image_train_network
 from musubi_tuner.qwen_image_train_network import qwen_image_setup_parser
 from musubi_tuner.qwen_image_train_network import QwenImageNetworkTrainer
 from musubi_tuner.dataset import config_utils
@@ -27,6 +28,7 @@ from musubi_tuner.training.experiment_states import (
 from musubi_tuner.training.validation_inputs import (
     iter_noise_checks, prepare_validation_inputs, read_validation_cache_pair, stable_hash,
 )
+from musubi_tuner.training import validation_inputs
 
 from test_qwen_image_experiment_paths import _cache_main, make_experiment
 from test_qwen_image_experiment_states import _assert_qwen_loader_accepts, _prepared_state, _tiny_adapter, _update
@@ -35,6 +37,80 @@ from test_qwen_image_validation_training import TAGS, TinyQwenBoundary, _event_s
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "qwen_image_lora_val_example"
 EXAMPLE_FILES = ("train.toml", "train-dataset.toml", "val-dataset.toml", "sample_prompts.txt")
+
+
+def test_training_command_prepares_all_configured_caches(tmp_path, monkeypatch):
+    selected = str(tmp_path / "train.toml")
+    train_data = str(tmp_path / "train-dataset.toml")
+    val_data = str(tmp_path / "val-dataset.toml")
+    args = SimpleNamespace(
+        _selected_train_config_path=selected,
+        dataset_config=train_data,
+        val_dataset_config=val_data,
+        vae=str(tmp_path / "vae.safetensors"),
+        text_encoder=str(tmp_path / "text.safetensors"),
+        max_data_loader_n_workers=2,
+        fp8_vl=True,
+        experiment_dir=str(tmp_path),
+    )
+    commands = []
+    monkeypatch.setenv("LOCAL_RANK", "1")
+    monkeypatch.setenv("WORLD_SIZE", "2")
+    monkeypatch.setattr(
+        qwen_image_train_network.subprocess, "run",
+        lambda command, check, env: commands.append((command, check, env)),
+    )
+    monkeypatch.setattr(qwen_image_train_network.tempfile, "gettempdir", lambda: str(tmp_path))
+
+    qwen_image_train_network._ensure_qwen_image_caches(args)
+
+    assert len(commands) == 4
+    assert all(check for _, check, _ in commands)
+    assert all("LOCAL_RANK" not in env and "WORLD_SIZE" not in env for _, _, env in commands)
+    assert [command[command.index("--dataset_config") + 1] for command, _, _ in commands] == [
+        train_data, train_data, val_data, val_data,
+    ]
+    assert [command[command.index("-m") + 1] for command, _, _ in commands] == [
+        "musubi_tuner.qwen_image_cache_latents",
+        "musubi_tuner.qwen_image_cache_text_encoder_outputs",
+        "musubi_tuner.qwen_image_cache_latents",
+        "musubi_tuner.qwen_image_cache_text_encoder_outputs",
+    ]
+    assert all(command[command.index("--train_config") + 1] == selected for command, _, _ in commands)
+    assert all(command[command.index("--experiment_dir") + 1] == str(tmp_path) for command, _, _ in commands)
+    assert all(command[command.index("--num_workers") + 1] == "2" for command, _, _ in commands)
+    assert ["--fp8_vl" in command for command, _, _ in commands] == [False, True, False, True]
+
+    commands.clear()
+    qwen_image_train_network._ensure_qwen_image_caches(args, dataset_configs=(val_data,), rebuild=True)
+    assert len(commands) == 2
+    assert all("--rebuild" in command for command, _, _ in commands)
+    assert all(command[command.index("--dataset_config") + 1] == val_data for command, _, _ in commands)
+
+
+def test_training_command_repairs_invalid_validation_cache(monkeypatch):
+    args = SimpleNamespace(_selected_train_config_path="train.toml", val_dataset_config="val-dataset.toml")
+    trainer = QwenImageNetworkTrainer(auto_cache=True)
+    calls = []
+    expected = object()
+
+    def prepare(_args):
+        calls.append("validate")
+        if calls.count("validate") == 1:
+            raise validation_inputs.InvalidValidationCacheError("stale cache")
+        return expected
+
+    monkeypatch.setattr(validation_inputs, "prepare_validation_inputs", prepare)
+    monkeypatch.setattr(
+        qwen_image_train_network,
+        "_ensure_qwen_image_caches",
+        lambda _args, **options: calls.append(options),
+    )
+
+    trainer._prepare_validation_manifest(args)
+
+    assert trainer.validation_manifest is expected
+    assert calls == ["validate", {"dataset_configs": ("val-dataset.toml",), "rebuild": True}, "validate"]
 GENERAL = {
     "resolution": [1024, 1024],
     "enable_bucket": True,
@@ -207,10 +283,46 @@ def _preflight_copied_example(monkeypatch, case, *cli):
     return args, trainer
 
 
+def test_one_config_command_dispatches_caches_from_effective_toml(copied_example, tmp_path, monkeypatch):
+    case = copied_example
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    parser = qwen_image_setup_parser(setup_parser_common())
+    monkeypatch.setattr("sys.argv", ["qwen_image_train_network", "--config_file", str(case["train_toml"])])
+    args = read_config_from_file(parser.parse_args(), parser)
+    commands = []
+    monkeypatch.setattr(
+        qwen_image_train_network.subprocess,
+        "run",
+        lambda command, check, env: commands.append((command, check)),
+    )
+
+    trainer = QwenImageNetworkTrainer(auto_cache=True)
+    trainer.validate_training_inputs(args)
+
+    root = case["root"].resolve()
+    assert trainer.validation_manifest is not None
+    assert len(commands) == 4 and all(check for _, check in commands)
+    assert [Path(command[command.index("--dataset_config") + 1]) for command, _ in commands] == [
+        root / "train-dataset.toml", root / "train-dataset.toml",
+        root / "val-dataset.toml", root / "val-dataset.toml",
+    ]
+    assert [Path(command[command.index("--vae") + 1]) for command, _ in commands if "--vae" in command] == [
+        root / "models/vae.safetensors", root / "models/vae.safetensors",
+    ]
+    assert [Path(command[command.index("--text_encoder") + 1]) for command, _ in commands if "--text_encoder" in command] == [
+        root / "models/text.safetensors", root / "models/text.safetensors",
+    ]
+
+
 def test_copied_example_real_readers_and_distinct_sources_from_other_cwd(copied_example, tmp_path, monkeypatch):
     case = copied_example
-    source = Path(__file__).resolve().parents[1] / "config_for_qwen_image_lora"
-    user_files = {name: (source / name).read_bytes() for name in ("train.toml", "sample_prompts.txt")}
+    source = tmp_path / "existing-user-files"
+    source.mkdir()
+    user_files = {"train.toml": b"user settings", "sample_prompts.txt": b"user prompts"}
+    for name, content in user_files.items():
+        (source / name).write_bytes(content)
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)

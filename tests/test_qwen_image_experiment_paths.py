@@ -149,7 +149,8 @@ def _parse_trainer(monkeypatch, train_toml: Path | None, *cli: str):
 
 
 def _cache_main(monkeypatch, module, argv: list[str]):
-    monkeypatch.setattr(sys, "argv", [module.__name__, *argv])
+    # These parser/path checks deliberately reach the model boundary even when fixtures have complete caches.
+    monkeypatch.setattr(sys, "argv", [module.__name__, *argv, *([] if "--rebuild" in argv else ["--rebuild"])])
 
     def stop_at_model(*_args, **_kwargs):
         raise ReachedModelBoundary

@@ -32,3 +32,4 @@
 ## Notes
 
 - All 16 checks pass. Exact configuration names, values, and CLI options describe the required user-facing artifact, not an implementation design.
+- Rechecked 2026-09-24 after the user replaced the four manual cache commands with one training command. The new FR-008 and SC-007 have explicit missing, existing, and stale-validation cache acceptance cases; no clarification marker remains.
