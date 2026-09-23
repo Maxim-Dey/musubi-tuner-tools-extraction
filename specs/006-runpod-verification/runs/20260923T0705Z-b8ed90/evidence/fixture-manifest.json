@@ -1,0 +1,199 @@
+{
+  "records": [
+    {
+      "path": "fixtures/canonical/train/a1fa_k1b_med1um_0001.png",
+      "sha256": "b1f55988d60fae5d1c05477725807400f25df3b020c81dc1e168b05a229fa994",
+      "bytes": 456471,
+      "dimensions": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "path": "fixtures/canonical/train/a1fa_k1b_med1um_0001.txt",
+      "sha256": "f3a95abde18198af7c7795bf78d2ede071b8b48189c9cac88dfa8b29aa924148",
+      "bytes": 218,
+      "caption_length": 218
+    },
+    {
+      "path": "fixtures/canonical/train/a1fa_k1b_med1um_0002.png",
+      "sha256": "e4e0813ee365df1a369face0cff558398f6250e61015afde4a702fcb4f92841e",
+      "bytes": 635373,
+      "dimensions": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "path": "fixtures/canonical/train/a1fa_k1b_med1um_0002.txt",
+      "sha256": "c2d9d9d516ec4310c9445a1591952f97fbdd962b18e6acbbb58582c6d9f78bb7",
+      "bytes": 519,
+      "caption_length": 519
+    },
+    {
+      "path": "fixtures/canonical/train/a1fa_k1b_med1um_0004.png",
+      "sha256": "5b640955fad40ca28cb47122b9785b7df56779e7f44b96bfda9bb969648cfb97",
+      "bytes": 743254,
+      "dimensions": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "path": "fixtures/canonical/train/a1fa_k1b_med1um_0004.txt",
+      "sha256": "d3da4b6b9f3bd45bce39ee386a4dc6108832f6aa6206cde5c6526741d3e1d7ec",
+      "bytes": 215,
+      "caption_length": 215
+    },
+    {
+      "path": "fixtures/canonical/val_familiar/a1fa_k1b_med1um_0001.png",
+      "sha256": "b1f55988d60fae5d1c05477725807400f25df3b020c81dc1e168b05a229fa994",
+      "bytes": 456471,
+      "dimensions": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "path": "fixtures/renamed/val_familiar/renamed_a1fa_k1b_med1um_0001.png",
+      "sha256": "b1f55988d60fae5d1c05477725807400f25df3b020c81dc1e168b05a229fa994",
+      "bytes": 456471,
+      "dimensions": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "path": "fixtures/canonical/val_familiar/a1fa_k1b_med1um_0001.txt",
+      "sha256": "f3a95abde18198af7c7795bf78d2ede071b8b48189c9cac88dfa8b29aa924148",
+      "bytes": 218,
+      "caption_length": 218
+    },
+    {
+      "path": "fixtures/renamed/val_familiar/renamed_a1fa_k1b_med1um_0001.txt",
+      "sha256": "f3a95abde18198af7c7795bf78d2ede071b8b48189c9cac88dfa8b29aa924148",
+      "bytes": 218,
+      "caption_length": 218
+    },
+    {
+      "path": "fixtures/canonical/val_familiar/a1fa_k1b_med1um_0002.png",
+      "sha256": "e4e0813ee365df1a369face0cff558398f6250e61015afde4a702fcb4f92841e",
+      "bytes": 635373,
+      "dimensions": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "path": "fixtures/renamed/val_familiar/renamed_a1fa_k1b_med1um_0002.png",
+      "sha256": "e4e0813ee365df1a369face0cff558398f6250e61015afde4a702fcb4f92841e",
+      "bytes": 635373,
+      "dimensions": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "path": "fixtures/canonical/val_familiar/a1fa_k1b_med1um_0002.txt",
+      "sha256": "c2d9d9d516ec4310c9445a1591952f97fbdd962b18e6acbbb58582c6d9f78bb7",
+      "bytes": 519,
+      "caption_length": 519
+    },
+    {
+      "path": "fixtures/renamed/val_familiar/renamed_a1fa_k1b_med1um_0002.txt",
+      "sha256": "c2d9d9d516ec4310c9445a1591952f97fbdd962b18e6acbbb58582c6d9f78bb7",
+      "bytes": 519,
+      "caption_length": 519
+    },
+    {
+      "path": "fixtures/canonical/val_unfamiliar/a1fa_k1b_med1um_0003.png",
+      "sha256": "be7964b11c0b8c428679bdf444e1ce686c287acd885b273041b4a95a92dc293e",
+      "bytes": 712580,
+      "dimensions": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "path": "fixtures/renamed/val_unfamiliar/renamed_a1fa_k1b_med1um_0003.png",
+      "sha256": "be7964b11c0b8c428679bdf444e1ce686c287acd885b273041b4a95a92dc293e",
+      "bytes": 712580,
+      "dimensions": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "path": "fixtures/canonical/val_unfamiliar/a1fa_k1b_med1um_0003.txt",
+      "sha256": "56796a4bd878cea06bfb33b0c83ede7ae1af3e0a0b7031e7cede6293865dd7ca",
+      "bytes": 278,
+      "caption_length": 276
+    },
+    {
+      "path": "fixtures/renamed/val_unfamiliar/renamed_a1fa_k1b_med1um_0003.txt",
+      "sha256": "56796a4bd878cea06bfb33b0c83ede7ae1af3e0a0b7031e7cede6293865dd7ca",
+      "bytes": 278,
+      "caption_length": 276
+    },
+    {
+      "path": "fixtures/canonical/val_unfamiliar/a1fa_k1b_med1um_0006.png",
+      "sha256": "5312a8b05843bbb3423027f5ee2d628b3ce7f43d0bb4da2f05aa712f7df90d47",
+      "bytes": 299990,
+      "dimensions": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "path": "fixtures/renamed/val_unfamiliar/renamed_a1fa_k1b_med1um_0006.png",
+      "sha256": "5312a8b05843bbb3423027f5ee2d628b3ce7f43d0bb4da2f05aa712f7df90d47",
+      "bytes": 299990,
+      "dimensions": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "path": "fixtures/canonical/val_unfamiliar/a1fa_k1b_med1um_0006.txt",
+      "sha256": "1148d47cc073cb6aa6b306cd1bc8a2df9d09e2b898b707bb7414d36093d73ed6",
+      "bytes": 256,
+      "caption_length": 254
+    },
+    {
+      "path": "fixtures/renamed/val_unfamiliar/renamed_a1fa_k1b_med1um_0006.txt",
+      "sha256": "1148d47cc073cb6aa6b306cd1bc8a2df9d09e2b898b707bb7414d36093d73ed6",
+      "bytes": 256,
+      "caption_length": 254
+    },
+    {
+      "path": "fixtures/canonical/val_unfamiliar/a1fa_k1b_med1um_0023.png",
+      "sha256": "014206d58bb596830c9113fd85e9cfc9c332120ab5f8b029fa8dd1b7f6d07ded",
+      "bytes": 285731,
+      "dimensions": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "path": "fixtures/renamed/val_unfamiliar/renamed_a1fa_k1b_med1um_0023.png",
+      "sha256": "014206d58bb596830c9113fd85e9cfc9c332120ab5f8b029fa8dd1b7f6d07ded",
+      "bytes": 285731,
+      "dimensions": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "path": "fixtures/canonical/val_unfamiliar/a1fa_k1b_med1um_0023.txt",
+      "sha256": "4a7c50e9d663562df2d593c41c6730eb0baf4bd0b4cd36e7cf2704d2549b5052",
+      "bytes": 292,
+      "caption_length": 292
+    },
+    {
+      "path": "fixtures/renamed/val_unfamiliar/renamed_a1fa_k1b_med1um_0023.txt",
+      "sha256": "4a7c50e9d663562df2d593c41c6730eb0baf4bd0b4cd36e7cf2704d2549b5052",
+      "bytes": 292,
+      "caption_length": 292
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "observed_utc": "2026-09-23T07:06:23.879163+00:00",
+  "host": "0f88a8265813",
+  "gpu": "0, NVIDIA RTX PRO 6000 Blackwell Server Edition, 97887, 97252, 595.91.07",
+  "gpu_processes": "",
+  "disk": "Filesystem        1B-blocks        Used    Available Use% Mounted on\noverlay        274877906944 57797709824 217080197120  22% /",
+  "python": "3.12.3",
+  "models": {
+    "/workspace/qwen_image_2512_bf16.safetensors": {
+      "bytes": 40861031488
+    },
+    "/workspace/qwen_image_vae.safetensors": {
+      "bytes": 253806246
+    },
+    "/workspace/qwen_2.5_vl_7b.safetensors": {
+      "bytes": 16584415576
+    }
+  },
+  "dataset_counts": {
+    "train": {
+      ".png": 107,
+      ".txt": 107
+    },
+    "val_familiar": {
+      ".png": 10,
+      ".txt": 10
+    },
+    "val_unfamiliar": {
+      ".png": 20,
+      ".txt": 20
+    }
+  },
+  "ssh_transport": "Host-key-checked interactive PTY; Basic SSH command mode unavailable"
+}

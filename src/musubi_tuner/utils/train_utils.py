@@ -116,7 +116,36 @@ def get_remove_step_no(args: argparse.Namespace, step_no: int):
     return remove_step_no
 
 
-def save_and_remove_state_on_epoch_end(args: argparse.Namespace, accelerator: accelerate.Accelerator, epoch_no: int):
+def _save_state_with_validation(accelerator, state_dir: str, payload: dict, after_save: Callable[[], None]) -> None:
+    """Save every rank's Accelerate state before main publishes metadata and cleanup."""
+    from musubi_tuner.training.validation_state import collective_error, write_validation_state
+
+    local_error = None
+    try:
+        accelerator.save_state(state_dir)
+    except Exception as error:
+        local_error = f"Accelerate state save failed: {error}"
+    error = collective_error(accelerator, local_error)
+    if error is not None:
+        raise RuntimeError(f"{state_dir}: {error}")
+    accelerator.wait_for_everyone()
+
+    local_error = None
+    if accelerator.is_main_process:
+        try:
+            write_validation_state(state_dir, payload)
+            after_save()
+        except Exception as error:
+            local_error = f"validation state metadata/upload/retention failed: {error}"
+    error = collective_error(accelerator, local_error)
+    if error is not None:
+        raise RuntimeError(f"{state_dir}: {error}")
+    accelerator.wait_for_everyone()
+
+
+def save_and_remove_state_on_epoch_end(
+    args: argparse.Namespace, accelerator: accelerate.Accelerator, epoch_no: int, *, validation_state: dict | None = None
+):
     model_name = args.output_name
 
     logger.info("")
@@ -124,21 +153,29 @@ def save_and_remove_state_on_epoch_end(args: argparse.Namespace, accelerator: ac
     os.makedirs(args.output_dir, exist_ok=True)
 
     state_dir = os.path.join(args.output_dir, EPOCH_STATE_NAME.format(model_name, epoch_no))
-    accelerator.save_state(state_dir)
-    if args.save_state_to_huggingface:
-        logger.info("uploading state to huggingface.")
-        huggingface_utils.upload(args, state_dir, "/" + EPOCH_STATE_NAME.format(model_name, epoch_no))
+    def after_save():
+        if args.save_state_to_huggingface:
+            logger.info("uploading state to huggingface.")
+            huggingface_utils.upload(args, state_dir, "/" + EPOCH_STATE_NAME.format(model_name, epoch_no))
 
-    last_n_epochs = args.save_last_n_epochs_state if args.save_last_n_epochs_state else args.save_last_n_epochs
-    if last_n_epochs is not None:
-        remove_epoch_no = epoch_no - args.save_every_n_epochs * last_n_epochs
-        state_dir_old = os.path.join(args.output_dir, EPOCH_STATE_NAME.format(model_name, remove_epoch_no))
-        if os.path.exists(state_dir_old):
-            logger.info(f"removing old state: {state_dir_old}")
-            shutil.rmtree(state_dir_old)
+        last_n_epochs = args.save_last_n_epochs_state if args.save_last_n_epochs_state else args.save_last_n_epochs
+        if last_n_epochs is not None:
+            remove_epoch_no = epoch_no - args.save_every_n_epochs * last_n_epochs
+            state_dir_old = os.path.join(args.output_dir, EPOCH_STATE_NAME.format(model_name, remove_epoch_no))
+            if os.path.exists(state_dir_old):
+                logger.info(f"removing old state: {state_dir_old}")
+                shutil.rmtree(state_dir_old)
+
+    if validation_state is None:
+        accelerator.save_state(state_dir)
+        after_save()
+    else:
+        _save_state_with_validation(accelerator, state_dir, validation_state, after_save)
 
 
-def save_and_remove_state_stepwise(args: argparse.Namespace, accelerator: accelerate.Accelerator, step_no: int):
+def save_and_remove_state_stepwise(
+    args: argparse.Namespace, accelerator: accelerate.Accelerator, step_no: int, *, validation_state: dict | None = None
+):
     model_name = args.output_name
 
     logger.info("")
@@ -146,25 +183,33 @@ def save_and_remove_state_stepwise(args: argparse.Namespace, accelerator: accele
     os.makedirs(args.output_dir, exist_ok=True)
 
     state_dir = os.path.join(args.output_dir, STEP_STATE_NAME.format(model_name, step_no))
-    accelerator.save_state(state_dir)
-    if args.save_state_to_huggingface:
-        logger.info("uploading state to huggingface.")
-        huggingface_utils.upload(args, state_dir, "/" + STEP_STATE_NAME.format(model_name, step_no))
+    def after_save():
+        if args.save_state_to_huggingface:
+            logger.info("uploading state to huggingface.")
+            huggingface_utils.upload(args, state_dir, "/" + STEP_STATE_NAME.format(model_name, step_no))
 
-    last_n_steps = args.save_last_n_steps_state if args.save_last_n_steps_state else args.save_last_n_steps
-    if last_n_steps is not None:
-        # last_n_steps前のstep_noから、save_every_n_stepsの倍数のstep_noを計算して削除する
-        remove_step_no = step_no - last_n_steps - 1
-        remove_step_no = remove_step_no - (remove_step_no % args.save_every_n_steps)
+        last_n_steps = args.save_last_n_steps_state if args.save_last_n_steps_state else args.save_last_n_steps
+        if last_n_steps is not None:
+            # last_n_steps前のstep_noから、save_every_n_stepsの倍数のstep_noを計算して削除する
+            remove_step_no = step_no - last_n_steps - 1
+            remove_step_no = remove_step_no - (remove_step_no % args.save_every_n_steps)
 
-        if remove_step_no > 0:
-            state_dir_old = os.path.join(args.output_dir, STEP_STATE_NAME.format(model_name, remove_step_no))
-            if os.path.exists(state_dir_old):
-                logger.info(f"removing old state: {state_dir_old}")
-                shutil.rmtree(state_dir_old)
+            if remove_step_no > 0:
+                state_dir_old = os.path.join(args.output_dir, STEP_STATE_NAME.format(model_name, remove_step_no))
+                if os.path.exists(state_dir_old):
+                    logger.info(f"removing old state: {state_dir_old}")
+                    shutil.rmtree(state_dir_old)
+
+    if validation_state is None:
+        accelerator.save_state(state_dir)
+        after_save()
+    else:
+        _save_state_with_validation(accelerator, state_dir, validation_state, after_save)
 
 
-def save_state_on_train_end(args: argparse.Namespace, accelerator: accelerate.Accelerator):
+def save_state_on_train_end(
+    args: argparse.Namespace, accelerator: accelerate.Accelerator, *, validation_state: dict | None = None
+):
     model_name = args.output_name
 
     logger.info("")
@@ -172,11 +217,16 @@ def save_state_on_train_end(args: argparse.Namespace, accelerator: accelerate.Ac
     os.makedirs(args.output_dir, exist_ok=True)
 
     state_dir = os.path.join(args.output_dir, LAST_STATE_NAME.format(model_name))
-    accelerator.save_state(state_dir)
+    def after_save():
+        if args.save_state_to_huggingface:
+            logger.info("uploading last state to huggingface.")
+            huggingface_utils.upload(args, state_dir, "/" + LAST_STATE_NAME.format(model_name))
 
-    if args.save_state_to_huggingface:
-        logger.info("uploading last state to huggingface.")
-        huggingface_utils.upload(args, state_dir, "/" + LAST_STATE_NAME.format(model_name))
+    if validation_state is None:
+        accelerator.save_state(state_dir)
+        after_save()
+    else:
+        _save_state_with_validation(accelerator, state_dir, validation_state, after_save)
 
 
 def get_lin_function(x1: float = 256, y1: float = 0.5, x2: float = 4096, y2: float = 1.15) -> Callable[[float], float]:

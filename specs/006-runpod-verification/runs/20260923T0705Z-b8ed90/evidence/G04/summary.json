@@ -1,0 +1,42 @@
+{
+  "absolute_differences": {
+    "train_eval_loss_high_noise": 0.0,
+    "train_eval_loss_low_noise": 0.0,
+    "train_eval_loss_mean": 0.0,
+    "val_loss_high_noise": 0.0,
+    "val_loss_low_noise": 0.0,
+    "val_loss_mean": 0.0
+  },
+  "adapter_after_sha256": "7500b1dd229fbe805e00d983cdad175b12b754e8954f58801d8719fd443914b2",
+  "adapter_before_sha256": "7500b1dd229fbe805e00d983cdad175b12b754e8954f58801d8719fd443914b2",
+  "capture_bytes": 146817600,
+  "capture_count": 40,
+  "capture_limit_bytes": 536870912,
+  "completed_optimizer_updates": 0,
+  "config_sha256": "489758195842e164b5ee5d8b9b45da7a8584671ffc02922a62c25ef6f0f98a3c",
+  "forwards_jsonl": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G04/forwards.jsonl",
+  "observed_metrics": {
+    "train_eval_loss_high_noise": 0.035014529479667544,
+    "train_eval_loss_low_noise": 0.037199326790869236,
+    "train_eval_loss_mean": 0.03610692813526839,
+    "val_loss_high_noise": 0.027944562801470358,
+    "val_loss_low_noise": 0.029147551705439884,
+    "val_loss_mean": 0.02854605725345512
+  },
+  "reference_metrics": {
+    "train_eval_loss_high_noise": 0.035014529479667544,
+    "train_eval_loss_low_noise": 0.037199326790869236,
+    "train_eval_loss_mean": 0.03610692813526839,
+    "val_loss_high_noise": 0.027944562801470358,
+    "val_loss_low_noise": 0.029147551705439884,
+    "val_loss_mean": 0.02854605725345512
+  },
+  "status": "PASS",
+  "tolerance": {
+    "atol": 0.0005,
+    "rtol": 0.005
+  },
+  "validation_calls": 1,
+  "validation_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+  "weights_sha256": "a3e9bb509819efd3f2b15072f8844001ff201637fbb847694ab5272bcfb4883b"
+}

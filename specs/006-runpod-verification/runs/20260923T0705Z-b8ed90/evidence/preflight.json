@@ -1,0 +1,86 @@
+{
+  "cases": [
+    {
+      "case": "g01",
+      "errors": [],
+      "max_train_steps": 12,
+      "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/train.toml"
+    },
+    {
+      "case": "g02",
+      "errors": [],
+      "max_train_steps": 10,
+      "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/train.toml"
+    },
+    {
+      "case": "g05-on",
+      "errors": [],
+      "max_train_steps": 4,
+      "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g05-on/train.toml"
+    },
+    {
+      "case": "g05-off",
+      "errors": [],
+      "max_train_steps": 4,
+      "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g05-off/train.toml"
+    },
+    {
+      "case": "g06-current",
+      "errors": [],
+      "max_train_steps": 4,
+      "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/train.toml"
+    },
+    {
+      "case": "g06-best",
+      "errors": [],
+      "max_train_steps": 4,
+      "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/train.toml"
+    },
+    {
+      "case": "g09",
+      "errors": [],
+      "max_train_steps": 2,
+      "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g09/train.toml"
+    },
+    {
+      "case": "g03-4x2",
+      "errors": [],
+      "max_train_steps": 1,
+      "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g03-4x2/train.toml"
+    },
+    {
+      "case": "g03-renamed",
+      "errors": [],
+      "max_train_steps": 1,
+      "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g03-renamed/train.toml"
+    },
+    {
+      "case": "g03-10x1",
+      "errors": [],
+      "max_train_steps": 1,
+      "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g03-10x1/train.toml"
+    },
+    {
+      "case": "g04",
+      "errors": [],
+      "max_train_steps": 1,
+      "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g04/train.toml"
+    },
+    {
+      "case": "g05-snapshot",
+      "errors": [],
+      "max_train_steps": 1,
+      "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g05-snapshot/train.toml"
+    }
+  ],
+  "config_checks_pass": true,
+  "declared_maximum_completed_updates": {
+    "conditional_two_gpu": 40,
+    "one_gpu": 38
+  },
+  "remaining_t009_gates": [
+    "Compare exact launch commands and CLI overrides with these TOMLs",
+    "Verify source/environment/model and fixture/cache manifests and hashes",
+    "Verify memory and dependency imports; record conditional G09 GPU count"
+  ]
+}

@@ -1,0 +1,3 @@
+cbf55390fff27dbc785046d7007b04e0c5dd7421e7ef128f2831eacb53a8e075  /workspace/qwen_image_2512_bf16.safetensors
+a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f  /workspace/qwen_image_vae.safetensors
+cfafd739459bc86257397259f612a9aee88e5b98e85b5c0d0d1717e898b3463a  /workspace/qwen_2.5_vl_7b.safetensors

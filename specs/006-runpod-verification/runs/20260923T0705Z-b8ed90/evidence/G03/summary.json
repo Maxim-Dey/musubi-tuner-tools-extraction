@@ -1,0 +1,49 @@
+{
+  "completed_optimizer_updates": 0,
+  "four_by_two_calls": 4,
+  "metric_absolute_differences": [
+    {
+      "train_eval_loss_high_noise": 0.0,
+      "train_eval_loss_low_noise": 0.0,
+      "train_eval_loss_mean": 0.0,
+      "val_loss_high_noise": 0.0,
+      "val_loss_low_noise": 0.0,
+      "val_loss_mean": 0.0
+    },
+    {
+      "train_eval_loss_high_noise": 0.0,
+      "train_eval_loss_low_noise": 0.0,
+      "train_eval_loss_mean": 0.0,
+      "val_loss_high_noise": 0.0,
+      "val_loss_low_noise": 0.0,
+      "val_loss_mean": 0.0
+    },
+    {
+      "train_eval_loss_high_noise": 0.0,
+      "train_eval_loss_low_noise": 0.0,
+      "train_eval_loss_mean": 0.0,
+      "val_loss_high_noise": 0.0,
+      "val_loss_low_noise": 0.0,
+      "val_loss_mean": 0.0
+    }
+  ],
+  "status": "PASS",
+  "ten_by_one_calls": 1,
+  "tolerance": {
+    "atol": 0.0001,
+    "rtol": 0.001
+  },
+  "validation_fingerprints": {
+    "canonical": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+    "fresh_process": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+    "renamed_copy": "b5c3cf1920af6f89b1fa7196a5521ee8f115e51259c658a90322f432eb5628bf",
+    "ten_by_one": "b5247848a351c3a793548f6d1bb8d7697905dc51a73156d497f799fdc2035b37"
+  },
+  "weights_sha256": "a3e9bb509819efd3f2b15072f8844001ff201637fbb847694ab5272bcfb4883b",
+  "worker_evidence": [
+    "same-process.json",
+    "fresh-process.json",
+    "renamed.json",
+    "ten-by-one.json"
+  ]
+}

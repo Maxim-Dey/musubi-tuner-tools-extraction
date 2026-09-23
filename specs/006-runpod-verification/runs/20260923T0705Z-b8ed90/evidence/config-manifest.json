@@ -1,0 +1,239 @@
+{
+  "records": [
+    {
+      "case": "g01",
+      "path": "experiments/g01/train.toml",
+      "sha256": "9161261324ffb666a38771f79c4cd35c4ba96fe01b037fbd9f98b5ccc7c0463b"
+    },
+    {
+      "case": "g01",
+      "path": "experiments/g01/train-dataset.toml",
+      "sha256": "72813166f1da5be9f0db80a2d3a2302052a516fdbb2815636f79559f0a2f2924"
+    },
+    {
+      "case": "g01",
+      "path": "experiments/g01/val-dataset.toml",
+      "sha256": "2c79657ed10c4c0f060d5231d6a508e5953560e5ac42d70c3725ab39a213ec9e"
+    },
+    {
+      "case": "g01",
+      "path": "experiments/g01/sample_prompts.txt",
+      "sha256": "a43cd9e46bccef2ab63bfdb99038a27e8e42dc57274d47e23257b705bc769fb3"
+    },
+    {
+      "case": "g02",
+      "path": "experiments/g02/train.toml",
+      "sha256": "fc45555a61b8ac8f0119b8e9348caa05176bb19da6a9e47520dcc0cbacb26972"
+    },
+    {
+      "case": "g02",
+      "path": "experiments/g02/train-dataset.toml",
+      "sha256": "72813166f1da5be9f0db80a2d3a2302052a516fdbb2815636f79559f0a2f2924"
+    },
+    {
+      "case": "g02",
+      "path": "experiments/g02/val-dataset.toml",
+      "sha256": "2c79657ed10c4c0f060d5231d6a508e5953560e5ac42d70c3725ab39a213ec9e"
+    },
+    {
+      "case": "g02",
+      "path": "experiments/g02/sample_prompts.txt",
+      "sha256": "a43cd9e46bccef2ab63bfdb99038a27e8e42dc57274d47e23257b705bc769fb3"
+    },
+    {
+      "case": "g03-4x2",
+      "path": "experiments/g03-4x2/train.toml",
+      "sha256": "489758195842e164b5ee5d8b9b45da7a8584671ffc02922a62c25ef6f0f98a3c"
+    },
+    {
+      "case": "g03-4x2",
+      "path": "experiments/g03-4x2/train-dataset.toml",
+      "sha256": "72813166f1da5be9f0db80a2d3a2302052a516fdbb2815636f79559f0a2f2924"
+    },
+    {
+      "case": "g03-4x2",
+      "path": "experiments/g03-4x2/val-dataset.toml",
+      "sha256": "2c79657ed10c4c0f060d5231d6a508e5953560e5ac42d70c3725ab39a213ec9e"
+    },
+    {
+      "case": "g03-4x2",
+      "path": "experiments/g03-4x2/sample_prompts.txt",
+      "sha256": "a43cd9e46bccef2ab63bfdb99038a27e8e42dc57274d47e23257b705bc769fb3"
+    },
+    {
+      "case": "g03-renamed",
+      "path": "experiments/g03-renamed/train.toml",
+      "sha256": "489758195842e164b5ee5d8b9b45da7a8584671ffc02922a62c25ef6f0f98a3c"
+    },
+    {
+      "case": "g03-renamed",
+      "path": "experiments/g03-renamed/train-dataset.toml",
+      "sha256": "72813166f1da5be9f0db80a2d3a2302052a516fdbb2815636f79559f0a2f2924"
+    },
+    {
+      "case": "g03-renamed",
+      "path": "experiments/g03-renamed/val-dataset.toml",
+      "sha256": "f2f320f8bc7f20425dc4b7c86e88a172f2d986d9a24c7b59205b8f727de3dc68"
+    },
+    {
+      "case": "g03-renamed",
+      "path": "experiments/g03-renamed/sample_prompts.txt",
+      "sha256": "a43cd9e46bccef2ab63bfdb99038a27e8e42dc57274d47e23257b705bc769fb3"
+    },
+    {
+      "case": "g03-10x1",
+      "path": "experiments/g03-10x1/train.toml",
+      "sha256": "eec4130e5169b3c7773ce6b7f374df5f14ff499294e1fcb8535c5139455cb124"
+    },
+    {
+      "case": "g03-10x1",
+      "path": "experiments/g03-10x1/train-dataset.toml",
+      "sha256": "72813166f1da5be9f0db80a2d3a2302052a516fdbb2815636f79559f0a2f2924"
+    },
+    {
+      "case": "g03-10x1",
+      "path": "experiments/g03-10x1/val-dataset.toml",
+      "sha256": "2c79657ed10c4c0f060d5231d6a508e5953560e5ac42d70c3725ab39a213ec9e"
+    },
+    {
+      "case": "g03-10x1",
+      "path": "experiments/g03-10x1/sample_prompts.txt",
+      "sha256": "a43cd9e46bccef2ab63bfdb99038a27e8e42dc57274d47e23257b705bc769fb3"
+    },
+    {
+      "case": "g04",
+      "path": "experiments/g04/train.toml",
+      "sha256": "489758195842e164b5ee5d8b9b45da7a8584671ffc02922a62c25ef6f0f98a3c"
+    },
+    {
+      "case": "g04",
+      "path": "experiments/g04/train-dataset.toml",
+      "sha256": "72813166f1da5be9f0db80a2d3a2302052a516fdbb2815636f79559f0a2f2924"
+    },
+    {
+      "case": "g04",
+      "path": "experiments/g04/val-dataset.toml",
+      "sha256": "2c79657ed10c4c0f060d5231d6a508e5953560e5ac42d70c3725ab39a213ec9e"
+    },
+    {
+      "case": "g04",
+      "path": "experiments/g04/sample_prompts.txt",
+      "sha256": "a43cd9e46bccef2ab63bfdb99038a27e8e42dc57274d47e23257b705bc769fb3"
+    },
+    {
+      "case": "g05-snapshot",
+      "path": "experiments/g05-snapshot/train.toml",
+      "sha256": "489758195842e164b5ee5d8b9b45da7a8584671ffc02922a62c25ef6f0f98a3c"
+    },
+    {
+      "case": "g05-snapshot",
+      "path": "experiments/g05-snapshot/train-dataset.toml",
+      "sha256": "72813166f1da5be9f0db80a2d3a2302052a516fdbb2815636f79559f0a2f2924"
+    },
+    {
+      "case": "g05-snapshot",
+      "path": "experiments/g05-snapshot/val-dataset.toml",
+      "sha256": "2c79657ed10c4c0f060d5231d6a508e5953560e5ac42d70c3725ab39a213ec9e"
+    },
+    {
+      "case": "g05-snapshot",
+      "path": "experiments/g05-snapshot/sample_prompts.txt",
+      "sha256": "a43cd9e46bccef2ab63bfdb99038a27e8e42dc57274d47e23257b705bc769fb3"
+    },
+    {
+      "case": "g05-on",
+      "path": "experiments/g05-on/train.toml",
+      "sha256": "6f3f72df0e2b700f3d9915d69d5e23402f350abcfece1dd9c0c1532187e893cd"
+    },
+    {
+      "case": "g05-on",
+      "path": "experiments/g05-on/train-dataset.toml",
+      "sha256": "72813166f1da5be9f0db80a2d3a2302052a516fdbb2815636f79559f0a2f2924"
+    },
+    {
+      "case": "g05-on",
+      "path": "experiments/g05-on/val-dataset.toml",
+      "sha256": "2c79657ed10c4c0f060d5231d6a508e5953560e5ac42d70c3725ab39a213ec9e"
+    },
+    {
+      "case": "g05-on",
+      "path": "experiments/g05-on/sample_prompts.txt",
+      "sha256": "a43cd9e46bccef2ab63bfdb99038a27e8e42dc57274d47e23257b705bc769fb3"
+    },
+    {
+      "case": "g05-off",
+      "path": "experiments/g05-off/train.toml",
+      "sha256": "676331b7a23516a6af8c7799a20fde66ef9db712623229078bf094edd897a452"
+    },
+    {
+      "case": "g05-off",
+      "path": "experiments/g05-off/train-dataset.toml",
+      "sha256": "72813166f1da5be9f0db80a2d3a2302052a516fdbb2815636f79559f0a2f2924"
+    },
+    {
+      "case": "g05-off",
+      "path": "experiments/g05-off/sample_prompts.txt",
+      "sha256": "a43cd9e46bccef2ab63bfdb99038a27e8e42dc57274d47e23257b705bc769fb3"
+    },
+    {
+      "case": "g06-current",
+      "path": "experiments/g06-current/train.toml",
+      "sha256": "6bd6086697b21cec38bdf49c518151ab88a3bd4e01f8da98c31996b5e3312a72"
+    },
+    {
+      "case": "g06-current",
+      "path": "experiments/g06-current/train-dataset.toml",
+      "sha256": "72813166f1da5be9f0db80a2d3a2302052a516fdbb2815636f79559f0a2f2924"
+    },
+    {
+      "case": "g06-current",
+      "path": "experiments/g06-current/val-dataset.toml",
+      "sha256": "2c79657ed10c4c0f060d5231d6a508e5953560e5ac42d70c3725ab39a213ec9e"
+    },
+    {
+      "case": "g06-current",
+      "path": "experiments/g06-current/sample_prompts.txt",
+      "sha256": "a43cd9e46bccef2ab63bfdb99038a27e8e42dc57274d47e23257b705bc769fb3"
+    },
+    {
+      "case": "g06-best",
+      "path": "experiments/g06-best/train.toml",
+      "sha256": "6bd6086697b21cec38bdf49c518151ab88a3bd4e01f8da98c31996b5e3312a72"
+    },
+    {
+      "case": "g06-best",
+      "path": "experiments/g06-best/train-dataset.toml",
+      "sha256": "72813166f1da5be9f0db80a2d3a2302052a516fdbb2815636f79559f0a2f2924"
+    },
+    {
+      "case": "g06-best",
+      "path": "experiments/g06-best/val-dataset.toml",
+      "sha256": "2c79657ed10c4c0f060d5231d6a508e5953560e5ac42d70c3725ab39a213ec9e"
+    },
+    {
+      "case": "g06-best",
+      "path": "experiments/g06-best/sample_prompts.txt",
+      "sha256": "a43cd9e46bccef2ab63bfdb99038a27e8e42dc57274d47e23257b705bc769fb3"
+    },
+    {
+      "case": "g09",
+      "path": "experiments/g09/train.toml",
+      "sha256": "3172ed8536ea0456f8d8cd5b8c66181119e188e45a8eb00636ea6af9b0df1f24"
+    },
+    {
+      "case": "g09",
+      "path": "experiments/g09/train-dataset.toml",
+      "sha256": "72813166f1da5be9f0db80a2d3a2302052a516fdbb2815636f79559f0a2f2924"
+    },
+    {
+      "case": "g09",
+      "path": "experiments/g09/val-dataset.toml",
+      "sha256": "2c79657ed10c4c0f060d5231d6a508e5953560e5ac42d70c3725ab39a213ec9e"
+    },
+    {
+      "case": "g09",
+      "path": "experiments/g09/sample_prompts.txt",
+      "sha256": "a43cd9e46bccef2ab63bfdb99038a27e8e42dc57274d47e23257b705bc769fb3"
+    }
+  ]
+}

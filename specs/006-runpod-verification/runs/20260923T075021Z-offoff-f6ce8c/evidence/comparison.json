@@ -1,0 +1,117 @@
+{
+  "adapter_updates": [
+    {
+      "identical_sha256": true,
+      "maximum_absolute_tensor_difference": 0.0,
+      "off_a_sha256": "6f72d636f0957042774302a0d3f7d3a3547d3494d0b83a80ff6e37d9a66b80a0",
+      "off_b_sha256": "6f72d636f0957042774302a0d3f7d3a3547d3494d0b83a80ff6e37d9a66b80a0",
+      "step": 1,
+      "tensors_outside_g05_tolerance": 0
+    },
+    {
+      "identical_sha256": false,
+      "maximum_absolute_tensor_difference": 0.00021990647655911744,
+      "off_a_sha256": "5bc4440b34c5b5c8e9ce4e849380d907eda6ae2796461db8030ce186103b29b8",
+      "off_b_sha256": "f32e7224c3e949e6b4b25844505bdaf016c740677f785ac47951a71902759acd",
+      "step": 2,
+      "tensor_count": 2520,
+      "tensors_outside_g05_tolerance": 323
+    },
+    {
+      "identical_sha256": false,
+      "maximum_absolute_tensor_difference": 0.00048041436821222305,
+      "off_a_sha256": "a1dbb955d00c97dd2e5cfe75b8f4e0bb44feaed9ae11fa7ac4faf4163d163b06",
+      "off_b_sha256": "b51b160384b83bd3bfec0425ba78b354a35ff7b831bd0a57acbe8713109df852",
+      "step": 3,
+      "tensor_count": 2520,
+      "tensors_outside_g05_tolerance": 1524
+    },
+    {
+      "identical_sha256": false,
+      "maximum_absolute_tensor_difference": 0.00517774373292923,
+      "off_a_sha256": "8b811ccdcd22abe8b20f42652e5c2dd7731de20fff91868ca6611b9cd047091a",
+      "off_b_sha256": "14697d1e0deb22d5e2ec4cc0f540f3cce781707ade625a07f5243701ba9b42a5",
+      "step": 4,
+      "tensor_count": 2520,
+      "tensors_outside_g05_tolerance": 1634
+    }
+  ],
+  "completed_optimizer_updates": 8,
+  "initial_state_exact": true,
+  "inputs_exact_all_four": true,
+  "interpretation": "A no-validation/no-validation baseline measures repeatability on this GPU. It cannot by itself prove a causal validation effect.",
+  "losses": [
+    {
+      "absolute_difference": 0.0,
+      "off_a": 0.04851683974266052,
+      "off_b": 0.04851683974266052,
+      "step": 1,
+      "within_g05_tolerance": true
+    },
+    {
+      "absolute_difference": 0.0,
+      "off_a": 0.021230578422546387,
+      "off_b": 0.021230578422546387,
+      "step": 2,
+      "within_g05_tolerance": true
+    },
+    {
+      "absolute_difference": 0.0005787014961242676,
+      "off_a": 0.0997576117515564,
+      "off_b": 0.10033631324768066,
+      "step": 3,
+      "within_g05_tolerance": false
+    },
+    {
+      "absolute_difference": 4.47295606136322e-05,
+      "off_a": 0.04266251251101494,
+      "off_b": 0.04270724207162857,
+      "step": 4,
+      "within_g05_tolerance": true
+    }
+  ],
+  "old_stage5_off_reference": {
+    "losses": [
+      0.04851683974266052,
+      0.021230578422546387,
+      0.09943509846925735,
+      0.0427098385989666
+    ],
+    "off_a_adapter_sha_equal_old": [
+      true,
+      false,
+      false,
+      false
+    ],
+    "off_a_losses_equal_old": [
+      true,
+      true,
+      false,
+      false
+    ],
+    "off_b_adapter_sha_equal_old": [
+      true,
+      false,
+      false,
+      false
+    ],
+    "off_b_losses_equal_old": [
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "status": "DIVERGED",
+  "tolerances": {
+    "adapter": {
+      "atol": 1e-05,
+      "rtol": 0.005
+    },
+    "loss": {
+      "atol": 0.0001,
+      "rtol": 0.001
+    }
+  },
+  "validation_calls": 0
+}

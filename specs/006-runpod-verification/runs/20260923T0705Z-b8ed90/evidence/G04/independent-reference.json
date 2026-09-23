@@ -1,0 +1,39 @@
+{
+  "capture_bytes": 146817600,
+  "capture_limit_bytes": 536870912,
+  "completed_optimizer_updates": 0,
+  "directed_sigma_sqrt_checks": 1,
+  "forward_captures": 40,
+  "forward_file_sha256": "09604391e8d5b26a8e9170435dc5269029fe2bb5bb3fc95f52f92a2fc674b91e",
+  "maximum_check_loss_absolute_difference": 7.450580596923828e-09,
+  "metric_absolute_differences": {
+    "train_eval_loss_high_noise": 1.1641532182693481e-09,
+    "train_eval_loss_low_noise": 1.6298145055770874e-09,
+    "train_eval_loss_mean": 1.3969838619232178e-09,
+    "val_loss_high_noise": 5.432715041719938e-10,
+    "val_loss_low_noise": 6.208817140973544e-10,
+    "val_loss_mean": 3.8805104962680304e-11
+  },
+  "observed_metrics": {
+    "train_eval_loss_high_noise": 0.035014529479667544,
+    "train_eval_loss_low_noise": 0.037199326790869236,
+    "train_eval_loss_mean": 0.03610692813526839,
+    "val_loss_high_noise": 0.027944562801470358,
+    "val_loss_low_noise": 0.029147551705439884,
+    "val_loss_mean": 0.02854605725345512
+  },
+  "reference_metrics": {
+    "train_eval_loss_high_noise": 0.03501453064382076,
+    "train_eval_loss_low_noise": 0.03719932842068374,
+    "train_eval_loss_mean": 0.03610692953225225,
+    "val_loss_high_noise": 0.027944563344741862,
+    "val_loss_low_noise": 0.02914755108455817,
+    "val_loss_mean": 0.028546057214650016
+  },
+  "reference_script_sha256": "4b48a3f459e40f33d505047c28b190bff6919843b7a89386642c2df5b77f620e",
+  "status": "PASS",
+  "tolerance": {
+    "atol": 0.0005,
+    "rtol": 0.005
+  }
+}

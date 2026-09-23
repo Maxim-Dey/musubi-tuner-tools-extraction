@@ -1,11 +1,15 @@
 """Real readers and early command-boundary validation, with no model execution."""
 
 from pathlib import Path
+import hashlib
 import json
 import sys
 
 import pytest
 import toml
+import torch
+from PIL import Image
+from safetensors.torch import save_file
 
 from musubi_tuner import qwen_image_train_network as training
 from musubi_tuner.training.parser_common import setup_parser_common, read_config_from_file
@@ -36,6 +40,70 @@ def test_all_training_template_values_and_cli_precedence(tmp_path, monkeypatch):
     assert (args.network_dim, args.learning_rate, args.fp8_base) == (8, 0.002, True)
     assert args.max_train_steps == 1600
     assert type(args.lr_warmup_steps) is int and args.lr_warmup_steps == 200
+
+
+def test_validation_defaults_toml_and_cli_precedence(tmp_path, monkeypatch):
+    defaults = resolve(monkeypatch, tmp_path)
+    assert (
+        defaults.val_dataset_config,
+        defaults.val_every_n_steps,
+        defaults.val_seed_noise,
+        defaults.val_level_noise_n,
+        defaults.val_seed_noise_n,
+    ) == (None, 200, 42, 10, 1)
+    training.validate_validation_args(defaults)
+
+    config = {
+        "val_dataset_config": "data/val-dataset.toml",
+        "val_every_n_steps": 17,
+        "val_seed_noise": -9,
+        "val_level_noise_n": 4,
+        "val_seed_noise_n": 3,
+    }
+    from_toml = resolve(monkeypatch, tmp_path, config)
+    assert all(getattr(from_toml, key) == value for key, value in config.items())
+    training.validate_validation_args(from_toml)
+    overridden = resolve(
+        monkeypatch,
+        tmp_path,
+        config,
+        ["--val_every_n_steps", "5", "--val_seed_noise", "0", "--val_level_noise_n", "2", "--val_seed_noise_n", "1"],
+    )
+    assert (overridden.val_every_n_steps, overridden.val_seed_noise, overridden.val_level_noise_n, overridden.val_seed_noise_n) == (
+        5, 0, 2, 1
+    )
+    assert overridden.val_dataset_config == config["val_dataset_config"]
+    training.validate_validation_args(overridden)
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("val_every_n_steps", 0),
+        ("val_every_n_steps", True),
+        ("val_every_n_steps", 1.5),
+        ("val_seed_noise", False),
+        ("val_seed_noise", "42"),
+        ("val_level_noise_n", 0),
+        ("val_level_noise_n", 1),
+        ("val_level_noise_n", 3),
+        ("val_level_noise_n", True),
+        ("val_seed_noise_n", 0),
+        ("val_seed_noise_n", False),
+        ("val_dataset_config", ""),
+        ("val_unknown", 2),
+    ],
+)
+def test_validation_effective_errors_precede_model(tmp_path, monkeypatch, invocation, key, value):
+    effects = forbid_effects(monkeypatch)
+    config = {**invocation, key: value}
+    path = tmp_path / "validation-settings.toml"
+    path.write_text(toml.dumps(config), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["fixture", "--config_file", str(path)])
+    with pytest.raises(ValueError) as error:
+        training.main()
+    assert key in str(error.value) and str(path) in str(error.value)
+    assert effects == []
 
 
 def test_sections_suffix_and_supported_override(tmp_path, monkeypatch):
@@ -216,6 +284,77 @@ def forbid_effects(monkeypatch):
     monkeypatch.setattr(cache_text_encoder_outputs, "prepare_cache_files_and_paths", forbidden)
     monkeypatch.setattr(cache_text_encoder_outputs, "post_process_cache_files", forbidden)
     return effects
+
+
+def test_training_dataset_rejects_validation_roles_before_model(tmp_path, monkeypatch, invocation):
+    declaration = toml.load(invocation["dataset_config"])
+    first = declaration["datasets"][0]
+    first["role"] = "val_familiar"
+    declaration["datasets"].append(
+        {**first, "role": "val_unfamiliar", "cache_directory": str(tmp_path / "other-cache")}
+    )
+    Path(invocation["dataset_config"]).write_text(toml.dumps(declaration), encoding="utf-8")
+    settings = tmp_path / "training-with-validation-as-data.toml"
+    settings.write_text(toml.dumps(invocation), encoding="utf-8")
+    effects = forbid_effects(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["fixture", "--config_file", str(settings)])
+
+    with pytest.raises(ValueError, match="role"):
+        training.main()
+    assert effects == []
+
+
+def test_validation_input_preflight_runs_before_accelerator(tmp_path, monkeypatch, invocation):
+    # The original training reader only checks cache paths at this boundary.
+    train_cache = tmp_path / "cache"
+    train_cache.mkdir()
+    (train_cache / "one_0032x0032_qi.safetensors").touch()
+    (train_cache / "one_qi_te.safetensors").touch()
+
+    datasets = []
+    for role, color in (("val_familiar", (255, 0, 0)), ("val_unfamiliar", (0, 0, 255))):
+        image_dir = tmp_path / role
+        image_dir.mkdir()
+        image_path = image_dir / "one.png"
+        Image.new("RGB", (32, 32), color).save(image_path)
+        (image_dir / "one.txt").write_text(role, encoding="utf-8")
+        image_id = hashlib.sha256(image_path.read_bytes()).hexdigest()
+        cache_dir = tmp_path / f"{role}-cache"
+        cache_dir.mkdir()
+        metadata = {"architecture": "qwen_image", "format_version": "1.0.1", "source_image_sha256": image_id}
+        save_file(
+            {"latents_1x4x4_float32": torch.ones((2, 1, 4, 4))},
+            str(cache_dir / "one_0032x0032_qi.safetensors"),
+            metadata={**metadata, "width": "32", "height": "32"},
+        )
+        save_file(
+            {"varlen_vl_embed_float32": torch.ones((2, 4))},
+            str(cache_dir / "one_qi_te.safetensors"),
+            metadata={**metadata, "caption1": role},
+        )
+        datasets.append({"role": role, "image_directory": str(image_dir), "cache_directory": str(cache_dir)})
+    val_config = tmp_path / "val-dataset.toml"
+    val_config.write_text(
+        toml.dumps({"general": {"resolution": 32, "caption_extension": ".txt"}, "datasets": datasets}), encoding="utf-8"
+    )
+    settings = tmp_path / "training-with-validation.toml"
+    settings.write_text(toml.dumps({**invocation, "val_dataset_config": str(val_config)}), encoding="utf-8")
+
+    from musubi_tuner.training import trainer_base
+
+    observed = []
+
+    def stop_after_preflight(trainer, args):
+        observed.append(trainer.validation_manifest)
+        raise RuntimeError("accelerator boundary")
+
+    monkeypatch.setattr(trainer_base.NetworkTrainer, "_prepare_accelerator_and_dtypes", stop_after_preflight)
+    monkeypatch.setattr(sys, "argv", ["fixture", "--config_file", str(settings)])
+    with pytest.raises(RuntimeError, match="accelerator boundary"):
+        training.main()
+    assert len(observed) == 1
+    assert len(observed[0].items_by_role["val_familiar"]) == 1
+    assert len(observed[0].items_by_role["val_unfamiliar"]) == 1
 
 
 @pytest.mark.parametrize(

@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 import copy
 import random
+import sys
 
 from accelerate import Accelerator
 import numpy as np
@@ -141,6 +142,36 @@ def test_sample_triggers_use_initial_then_step_or_epoch(initial, steps, epoch, e
     assert should_sample_images(args, steps, epoch) is expected
 
 
+def test_absent_experiment_root_keeps_cwd_relative_config_paths(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from musubi_tuner.dataset.config_utils import load_user_config
+    from musubi_tuner.qwen_image_train_network import qwen_image_setup_parser
+    from musubi_tuner.training.parser_common import read_config_from_file, setup_parser_common
+
+    config_home = tmp_path / "config-home"
+    invocation_home = tmp_path / "invocation-home"
+    config_home.mkdir()
+    invocation_home.mkdir()
+    config_file = config_home / "train.toml"
+    config_file.write_text(
+        'dataset_config = "dataset.toml"\noutput_dir = "output"\nsample_prompts = "prompts.txt"\n',
+        encoding="utf-8",
+    )
+    (invocation_home / "dataset.toml").write_text('[legacy]\norigin = "cwd"\n', encoding="utf-8")
+    monkeypatch.chdir(invocation_home)
+    monkeypatch.setattr(sys, "argv", ["fixture", "--config_file", str(config_file)])
+
+    parser = qwen_image_setup_parser(setup_parser_common())
+    args = read_config_from_file(parser.parse_args(), parser)
+
+    assert getattr(args, "experiment_dir", None) is None
+    assert (args.dataset_config, args.output_dir, args.sample_prompts) == ("dataset.toml", "output", "prompts.txt")
+    assert load_user_config(args.dataset_config)["legacy"]["origin"] == "cwd"
+    assert Path.cwd() == invocation_home
+    assert (Path.cwd() / args.output_dir).resolve() == invocation_home / "output"
+
+
 def assert_state_equal(left, right):
     if isinstance(left, torch.Tensor):
         torch.testing.assert_close(left, right, rtol=0, atol=0)
@@ -197,6 +228,7 @@ def test_sampling_and_logs_preserve_observed_training_state(tmp_path, monkeypatc
         sample_prompts="fixture",
         optimizer_type="AdamW",
     )
+    assert getattr(args, "experiment_dir", None) is None
     transitions = []
     for name in ("switch_block_swap_for_inference", "switch_block_swap_for_training"):
         original = getattr(model, name)
@@ -512,3 +544,206 @@ def test_names_and_independent_retention_windows(tmp_path):
     assert (tmp_path / "qwen-000004-state").exists()
     train_utils.save_state_on_train_end(args, accelerator)
     assert (tmp_path / "qwen-state").is_dir()
+
+
+def test_absent_validation_config_preserves_legacy_training_path(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from pathlib import Path
+
+    from musubi_tuner.qwen_image_train_network import qwen_image_setup_parser
+    from musubi_tuner.training import validation_inputs
+    from musubi_tuner.training.parser_common import setup_parser_common
+
+    def unexpected_validation(*_args, **_kwargs):
+        raise AssertionError("disabled training entered validation preparation or evaluation")
+
+    for name in ("prepare_validation_inputs", "make_validation_loader", "iter_validation_checks"):
+        monkeypatch.setattr(validation_inputs, name, unexpected_validation)
+
+    class TinyNetwork(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.tensor(0.25))
+            self.saved = []
+            self.step_starts = 0
+
+        def on_epoch_start(self, _transformer):
+            self.train()
+
+        def on_step_start(self):
+            self.step_starts += 1
+
+        def get_trainable_params(self):
+            return self.parameters()
+
+        def save_weights(self, path, _dtype, metadata):
+            self.saved.append((Path(path).name, metadata["ss_steps"]))
+            Path(path).write_bytes(b"controlled adapter")
+
+    class TinyTransformer(torch.nn.Module):
+        def __init__(self, network):
+            super().__init__()
+            self.network = network
+
+        def forward(self, **kwargs):
+            return kwargs["hidden_states"] * self.network.weight
+
+    class RecordingAccelerator:
+        is_main_process = True
+        is_local_main_process = True
+        device = torch.device("cpu")
+        sync_gradients = True
+        trackers = [object()]
+
+        def __init__(self):
+            self.calls = []
+            self.logs = []
+
+        def register_save_state_pre_hook(self, hook):
+            self.save_hook = hook
+
+        def register_load_state_pre_hook(self, hook):
+            self.load_hook = hook
+
+        def load_state(self, path):
+            self.calls.append(("load_state", str(path)))
+            self.load_hook([], path)
+
+        def save_state(self, path):
+            self.calls.append(("save_state", Path(path).name))
+            Path(path).mkdir(parents=True, exist_ok=True)
+            self.save_hook([], [], path)
+
+        def unwrap_model(self, model):
+            return model
+
+        def accumulate(self, _model):
+            return nullcontext()
+
+        def autocast(self):
+            return nullcontext()
+
+        def backward(self, loss):
+            loss.backward()
+
+        def clip_grad_norm_(self, parameters, max_norm):
+            return torch.nn.utils.clip_grad_norm_(parameters, max_norm)
+
+        def init_trackers(self, *_args, **_kwargs):
+            self.calls.append(("init_trackers",))
+
+        def log(self, values, step):
+            self.logs.append((step, dict(values)))
+
+        def wait_for_everyone(self):
+            self.calls.append(("wait_for_everyone",))
+
+        def end_training(self):
+            self.calls.append(("end_training",))
+
+        def print(self, *_args, **_kwargs):
+            pass
+
+    args = qwen_image_setup_parser(setup_parser_common()).parse_args([])
+    assert getattr(args, "experiment_dir", None) is None
+    args.val_dataset_config = None
+    args.max_train_steps = 1
+    args.max_train_epochs = None
+    args.gradient_accumulation_steps = 1
+    args.output_dir = str(tmp_path)
+    args.output_name = "legacy"
+    args.weighting_scheme = "none"
+    args.split_attn = True
+    args.save_every_n_steps = 1
+    args.save_state = True
+    args.save_state_on_train_end = False
+    args.resume = str(tmp_path / "old-state")
+    args.resume_from_huggingface = False
+    args.log_tracker_name = None
+    args.log_tracker_config = None
+    args.wandb_run_name = None
+    args.network_args = None
+    args.dit = None
+    args.vae = None
+    args.full_fp16 = False
+    args.full_bf16 = False
+
+    trainer = QwenImageNetworkTrainer()
+    network = TinyNetwork()
+    transformer = TinyTransformer(network)
+    accelerator = RecordingAccelerator()
+    optimizer = torch.optim.SGD(network.parameters(), lr=0.1)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda _step: 1)
+    latents = torch.full((1, 2, 1, 4, 4), 0.2)
+    batch = {"latents": latents, "timesteps": torch.tensor([500.0]), "vl_embed": [torch.ones(2, 8)]}
+    group = SimpleNamespace(num_train_items=1, datasets=[SimpleNamespace(batch_size=1, get_metadata=lambda: {})])
+    trainer.validate_training_dataset(args, group)
+    assert not hasattr(trainer, "validation_manifest")
+    monkeypatch.setattr(
+        trainer,
+        "get_noisy_model_input_and_timesteps",
+        lambda _args, _noise, clean, timesteps, *_rest: (clean, timesteps),
+    )
+    trainer._register_hooks_and_resume(args, accelerator, network)
+    assert accelerator.calls == [("load_state", args.resume)]
+
+    random_before = random.getstate()
+    numpy_before = np.random.get_state()
+    torch.manual_seed(731)
+    expected_noise = torch.randn_like(latents)
+    expected_loss = torch.nn.functional.mse_loss(latents * 0.25, expected_noise - latents)
+    expected_gradient = (2 * (latents * 0.25 - (expected_noise - latents)) * latents).mean()
+    expected_weight = 0.25 - 0.1 * expected_gradient
+    expected_torch_rng = torch.get_rng_state().clone()
+    torch.manual_seed(731)
+
+    transitions = []
+    trainer._run_training_loop(
+        args,
+        accelerator,
+        1,
+        0.0,
+        group,
+        [batch],
+        SimpleNamespace(value=0),
+        transformer,
+        network,
+        network,
+        optimizer,
+        "SGD",
+        "",
+        lambda: transitions.append("train"),
+        lambda: transitions.append("eval"),
+        scheduler,
+        None,
+        None,
+        None,
+        torch.float32,
+        torch.float32,
+    )
+
+    torch.testing.assert_close(network.weight.detach(), expected_weight)
+    assert network.step_starts == 1
+    assert scheduler.last_epoch == 1
+    assert accelerator.logs[0] == (0, {})
+    assert accelerator.logs[1][0] == 1
+    assert accelerator.logs[1][1]["loss/current"] == pytest.approx(expected_loss.item())
+    assert accelerator.logs[1][1]["loss/average"] == pytest.approx(expected_loss.item())
+    assert accelerator.logs[1][1]["lr/unet"] == pytest.approx(0.1)
+    assert accelerator.logs[2] == (1, {"loss/epoch": pytest.approx(expected_loss.item())})
+    assert all(not any("val_loss" in key or "train_eval_loss" in key for key in values) for _, values in accelerator.logs)
+    assert [call for call in accelerator.calls if call[0] == "save_state"] == [
+        ("save_state", "legacy-step00000001-state"),
+        ("save_state", "legacy-state"),
+    ]
+    assert network.saved == [("legacy-step00000001.safetensors", "1"), ("legacy.safetensors", "1")]
+    assert (tmp_path / "legacy-step00000001.safetensors").is_file()
+    assert (tmp_path / "legacy-step00000001-state").is_dir()
+    assert (tmp_path / "legacy.safetensors").is_file()
+    assert (tmp_path / "legacy-state").is_dir()
+    assert transitions == ["train", "eval", "train", "eval", "train", "eval"]
+    assert_state_equal(random_before, random.getstate())
+    assert_state_equal(numpy_before, np.random.get_state())
+    assert_state_equal(expected_torch_rng, torch.get_rng_state())
+    assert not hasattr(trainer, "validation_manifest")
+    assert not list(tmp_path.rglob("val_loss_state.json"))

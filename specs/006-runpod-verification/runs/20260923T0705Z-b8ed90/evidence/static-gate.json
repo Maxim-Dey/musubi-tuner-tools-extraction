@@ -1,0 +1,24 @@
+{
+  "pass": true,
+  "checks": {
+    "source_files": 38,
+    "fixture_files": 26,
+    "cache_files": 26,
+    "dit_tensor_count": 1933,
+    "vae_tensor_count": 194,
+    "text_encoder_tensor_count": 729,
+    "cuda_gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "free_vram_bytes": 101390548992,
+    "parsed_cases": 12,
+    "g01_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+    "g01_role_counts": {
+      "val_familiar": 2,
+      "val_unfamiliar": 3
+    },
+    "g03-renamed_fingerprint": "b5c3cf1920af6f89b1fa7196a5521ee8f115e51259c658a90322f432eb5628bf",
+    "g03-renamed_role_counts": {
+      "val_familiar": 2,
+      "val_unfamiliar": 3
+    }
+  }
+}

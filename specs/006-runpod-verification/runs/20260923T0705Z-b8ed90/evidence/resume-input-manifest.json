@@ -1,0 +1,127 @@
+{
+  "copies": [
+    {
+      "source": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/current_training_states/qwen_image_lora-step-8",
+      "destination": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/current_training_states/qwen_image_lora-step-8",
+      "members": [
+        {
+          "path": "experiment_state.json",
+          "sha256": "9c8f54d2106f0ca705f759ab4e791533e10dd37fca107941d8a2fd5d5b494d60",
+          "bytes": 669
+        },
+        {
+          "path": "model.safetensors",
+          "sha256": "42208e7bea3fb241fa3d43d21bd75905dea8c991f6213fbb9a576042d6597346",
+          "bytes": 590146936
+        },
+        {
+          "path": "optimizer.bin",
+          "sha256": "b9e6901636580b09b88c1c4400c5af8cfbc2fd5d357317605aba753378c70685",
+          "bytes": 300296013
+        },
+        {
+          "path": "random_states_0.pkl",
+          "sha256": "99ca2a18ac017db4cf88ec25726c218721303e429ce1900ad137903afd0653a7",
+          "bytes": 14757
+        },
+        {
+          "path": "samples/qwen_image_lora_000008_00_20260923072240_42_000.png",
+          "sha256": "993a633e0dfaa6ddde27aa93b0727acc787ae3884a853638993ba5f48e86c311",
+          "bytes": 1486124
+        },
+        {
+          "path": "scheduler.bin",
+          "sha256": "3171563734b5ddb8d5bfe6018244a4a51aa2264fac6de0b571db55f70ad7fcdc",
+          "bytes": 1401
+        },
+        {
+          "path": "val_loss_state.json",
+          "sha256": "5aa228be88146a11188a2a45a440809259a021ad953fadbe480eafd62709c75a",
+          "bytes": 288
+        }
+      ]
+    },
+    {
+      "source": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/val_training_states/val-loss/qwen_image_lora-step-12",
+      "destination": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/val_training_states/val-loss/qwen_image_lora-step-12",
+      "members": [
+        {
+          "path": "experiment_state.json",
+          "sha256": "9f9bd99751f7341cd7c43e5f4c3731b1eb50c41e0ffdd2ea6d0c3eb15b55e375",
+          "bytes": 679
+        },
+        {
+          "path": "model.safetensors",
+          "sha256": "a3e9bb509819efd3f2b15072f8844001ff201637fbb847694ab5272bcfb4883b",
+          "bytes": 590146936
+        },
+        {
+          "path": "optimizer.bin",
+          "sha256": "a796ec72fbff2c2e3cb4d28eaa5fba874e9fb9d10df5d52d758ae57104804b7a",
+          "bytes": 300296013
+        },
+        {
+          "path": "random_states_0.pkl",
+          "sha256": "d405c15512092a4c97be7d133f2da8a7fec70e1b67153ad7a3efaa1882987643",
+          "bytes": 14757
+        },
+        {
+          "path": "samples/qwen_image_lora_000012_00_20260923072313_42_000.png",
+          "sha256": "ab9d003c53ab2162aa6a2c2d7670509f24dbe13b55608e295611ac1f4c171728",
+          "bytes": 1461879
+        },
+        {
+          "path": "scheduler.bin",
+          "sha256": "d3bf7a28b1ea245e25a7767c80680704399afa4bd8fffd0f64b84b9b1d6510c6",
+          "bytes": 1401
+        },
+        {
+          "path": "val_loss_state.json",
+          "sha256": "2ed899d7e59a151a976adf52b87e2e0339f97a3124cb87a6c37514dc6cfd5ea4",
+          "bytes": 289
+        }
+      ]
+    },
+    {
+      "source": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/val_training_states/val-loss/qwen_image_lora-step-12",
+      "destination": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/val_training_states/val-loss/qwen_image_lora-step-12",
+      "members": [
+        {
+          "path": "experiment_state.json",
+          "sha256": "9f9bd99751f7341cd7c43e5f4c3731b1eb50c41e0ffdd2ea6d0c3eb15b55e375",
+          "bytes": 679
+        },
+        {
+          "path": "model.safetensors",
+          "sha256": "a3e9bb509819efd3f2b15072f8844001ff201637fbb847694ab5272bcfb4883b",
+          "bytes": 590146936
+        },
+        {
+          "path": "optimizer.bin",
+          "sha256": "a796ec72fbff2c2e3cb4d28eaa5fba874e9fb9d10df5d52d758ae57104804b7a",
+          "bytes": 300296013
+        },
+        {
+          "path": "random_states_0.pkl",
+          "sha256": "d405c15512092a4c97be7d133f2da8a7fec70e1b67153ad7a3efaa1882987643",
+          "bytes": 14757
+        },
+        {
+          "path": "samples/qwen_image_lora_000012_00_20260923072313_42_000.png",
+          "sha256": "ab9d003c53ab2162aa6a2c2d7670509f24dbe13b55608e295611ac1f4c171728",
+          "bytes": 1461879
+        },
+        {
+          "path": "scheduler.bin",
+          "sha256": "d3bf7a28b1ea245e25a7767c80680704399afa4bd8fffd0f64b84b9b1d6510c6",
+          "bytes": 1401
+        },
+        {
+          "path": "val_loss_state.json",
+          "sha256": "2ed899d7e59a151a976adf52b87e2e0339f97a3124cb87a6c37514dc6cfd5ea4",
+          "bytes": 289
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/scripts/real_probe.py",
+  "sha256": "4c86532a37198ce62c33bbaca66a7f93ba35dd2b626961fc34f8006ad20be07d",
+  "note": "local-only probe fixes after transfer archive: G05 snapshot budget and strict adapter check"
+}

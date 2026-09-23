@@ -1,0 +1,17 @@
+[general]
+resolution = [1024, 1024]
+enable_bucket = true
+bucket_no_upscale = true
+caption_extension = ".txt"
+batch_size = 1
+num_repeats = 1
+
+[[datasets]]
+role = "val_familiar"
+image_directory = "dataset/val_familiar"
+cache_directory = "cache/val_familiar"
+
+[[datasets]]
+role = "val_unfamiliar"
+image_directory = "dataset/val_unfamiliar"
+cache_directory = "cache/val_unfamiliar"

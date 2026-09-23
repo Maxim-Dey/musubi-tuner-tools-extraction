@@ -4,12 +4,14 @@ import ast
 import asyncio
 import importlib
 import argparse
+import itertools
 import math
 import os
 import sys
 import random
 import time
 import json
+from pathlib import Path
 from dataclasses import dataclass, field
 from multiprocessing import Value
 from typing import Any, List, Optional
@@ -21,7 +23,7 @@ import toml
 
 import torch
 from tqdm import tqdm
-from accelerate.utils import set_seed
+from accelerate.utils import broadcast_object_list, set_seed
 from accelerate import Accelerator, PartialState
 from safetensors.torch import load_file
 import transformers
@@ -876,15 +878,18 @@ class NetworkTrainer:
                 print(line)
 
     def sample_images(
-        self, accelerator: Accelerator, args, epoch, steps, sample_resources, transformer, sample_parameters, dit_dtype
+        self, accelerator: Accelerator, args, epoch, steps, sample_resources, transformer, sample_parameters, dit_dtype,
+        *, save_dir=None, force=False,
     ):
         """architecture independent sample images"""
-        if not should_sample_images(args, steps, epoch):
+        if not force and not should_sample_images(args, steps, epoch):
             return
 
         logger.info("")
         logger.info(f"generating sample images at step / サンプル画像生成 ステップ: {steps}")
         if sample_parameters is None:
+            if save_dir is not None:
+                raise ValueError("sample image generation requires prompts in experiment mode")
             logger.error(f"No prompt file / プロンプトファイルがありません: {args.sample_prompts}")
             return
 
@@ -895,7 +900,7 @@ class NetworkTrainer:
         transformer.switch_block_swap_for_inference()
 
         # Create a directory to save the samples
-        save_dir = os.path.join(args.output_dir, "sample")
+        save_dir = str(save_dir) if save_dir is not None else os.path.join(args.output_dir, "sample")
         os.makedirs(save_dir, exist_ok=True)
 
         # save random state to restore later
@@ -1005,6 +1010,8 @@ class NetworkTrainer:
 
         # Save image
         if image is None:
+            if getattr(args, "experiment_dir", None):
+                raise ValueError("sample image generation returned no image")
             logger.error("No image generated")
             return
 
@@ -1198,6 +1205,8 @@ class NetworkTrainer:
         dit_dtype: torch.dtype,
         network_dtype: torch.dtype,
         global_step: int,
+        *,
+        exact_sigma=None,
     ) -> tuple[torch.Tensor, dict[str, float]]:
         """Reduce a ``DiTOutput`` to a scalar loss + per-step metrics dict.
 
@@ -1213,7 +1222,9 @@ class NetworkTrainer:
         populate with named scalars for loss-decomposition logging
         (e.g. ``{"loss/gen": ..., "loss/rep": ...}``).
         """
-        weighting = compute_loss_weighting_for_sd3(args.weighting_scheme, noise_scheduler, timesteps, timesteps.device, dit_dtype)
+        weighting = compute_loss_weighting_for_sd3(
+            args.weighting_scheme, noise_scheduler, timesteps, timesteps.device, dit_dtype, exact_sigma=exact_sigma
+        )
         loss = torch.nn.functional.mse_loss(output.pred.to(network_dtype), output.target, reduction="none")
         if weighting is not None:
             loss = loss * weighting
@@ -1323,6 +1334,21 @@ class NetworkTrainer:
             vae.eval()
         return sample_parameters, vae
 
+    def _prepare_experiment_sampling(self, args, accelerator, vae_dtype):
+        """Keep prompt preparation from advancing the training RNG streams."""
+        python_rng = random.getstate()
+        numpy_rng = np.random.get_state()
+        cpu_rng = torch.get_rng_state()
+        cuda_rng = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+        try:
+            return self.prepare_sampling(args, accelerator, vae_dtype)
+        finally:
+            random.setstate(python_rng)
+            np.random.set_state(numpy_rng)
+            torch.set_rng_state(cpu_rng)
+            if cuda_rng is not None:
+                torch.cuda.set_rng_state_all(cuda_rng)
+
     def on_before_sample_images(
         self, accelerator, args, epoch, steps, sample_resources, transformer, network, sample_parameters, dit_dtype
     ) -> None:
@@ -1389,6 +1415,174 @@ class NetworkTrainer:
     def validate_training_dataset(self, args, dataset):
         pass
 
+    def _assert_validation_update_agreement(
+        self, accelerator, *, sync_gradients: bool, completed_update: bool, absolute_step: int
+    ):
+        """Check every enabled microbatch boundary before conditional events."""
+        if getattr(accelerator, "num_processes", 1) <= 1:
+            return
+        local = torch.tensor(
+            [int(sync_gradients), int(completed_update), absolute_step],
+            dtype=torch.int64,
+            device=accelerator.device,
+        )
+        observed = accelerator.gather(local).reshape(-1, 3)
+        if not bool(torch.all(observed == observed[0])):
+            raise RuntimeError("validation boundary differs across ranks: optimizer state or absolute step")
+
+    def _run_validation_boundary(
+        self,
+        args,
+        accelerator,
+        transformer,
+        network,
+        noise_scheduler,
+        dit_dtype,
+        network_dtype,
+        absolute_step,
+        completed,
+        final,
+    ):
+        """Run one Qwen validation event on main and release every rank together."""
+        distributed = getattr(accelerator, "num_processes", 1) > 1
+        if distributed:
+            boundary = torch.tensor([absolute_step, int(completed), int(final)], device=accelerator.device)
+            observed = accelerator.gather(boundary).reshape(-1, 3)
+            if not bool(torch.all(observed == observed[0])):
+                raise RuntimeError("validation boundary differs across ranks; check completed optimizer steps")
+
+        due = not completed or absolute_step % args.val_every_n_steps == 0 or final
+        if not due:
+            return
+
+        error = None
+        payload = None
+        if accelerator.is_main_process:
+            try:
+                payload = self.evaluate_validation_event(
+                    args,
+                    accelerator,
+                    accelerator.unwrap_model(transformer),
+                    accelerator.unwrap_model(network),
+                    noise_scheduler,
+                    dit_dtype,
+                    network_dtype,
+                    absolute_step,
+                )
+            except Exception as exc:
+                error = exc
+        if distributed:
+            status = [None if error is None else f"{type(error).__name__}: {error}"]
+            if getattr(args, "experiment_dir", None):
+                status.append(payload)
+            broadcast_object_list(status)
+            if status[0] is not None:
+                raise RuntimeError(f"validation at completed step {absolute_step} failed: {status[0]}")
+            if getattr(args, "experiment_dir", None):
+                payload = status[1]
+        elif error is not None:
+            raise error
+        return payload
+
+    def _run_experiment_package_event(
+        self, args, accelerator, transformer, network, manifest, *, absolute_step, reasons,
+        metrics_at_step, sample_resources, sample_parameters, dit_dtype, epoch=None,
+    ):
+        """Publish one complete package from this boundary's current weights."""
+        from musubi_tuner.training.experiment_states import save_package
+
+        sampling_enabled = sample_parameters is not None
+
+        def generate_samples(staging: Path) -> int:
+            sources = (transformer, network, sample_resources)
+            modules = {id(module): module for source in sources if isinstance(source, torch.nn.Module)
+                       for module in source.modules()}
+            modes = {key: module.training for key, module in modules.items()}
+            adapter = accelerator.unwrap_model(network)
+            gradients = [(parameter, None if parameter.grad is None else parameter.grad.detach().clone())
+                         for parameter in adapter.parameters()]
+            python_rng = random.getstate()
+            numpy_rng = np.random.get_state()
+            cpu_rng = torch.get_rng_state()
+            cuda_rng = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+            vae_device = None
+            if isinstance(sample_resources, torch.nn.Module):
+                first = next(iter(sample_resources.parameters()), None)
+                if first is None:
+                    first = next(iter(sample_resources.buffers()), None)
+                vae_device = first.device if first is not None else torch.device("cpu")
+            try:
+                before_succeeded = False
+                try:
+                    self.on_before_sample_images(
+                        accelerator, args, epoch, absolute_step, sample_resources, transformer, network,
+                        sample_parameters, dit_dtype,
+                    )
+                    before_succeeded = True
+                    self.sample_images(
+                        accelerator, args, epoch, absolute_step, sample_resources, transformer,
+                        sample_parameters, dit_dtype, save_dir=staging / "samples", force=True,
+                    )
+                finally:
+                    if before_succeeded:
+                        self.on_after_sample_images(
+                            accelerator, args, epoch, absolute_step, sample_resources, transformer, network,
+                            sample_parameters, dit_dtype,
+                        )
+                return len(sample_parameters)
+            finally:
+                unwrapped = accelerator.unwrap_model(transformer)
+                if hasattr(unwrapped, "switch_block_swap_for_training"):
+                    unwrapped.switch_block_swap_for_training()
+                if vae_device is not None:
+                    sample_resources.to(vae_device)
+                for key, module in modules.items():
+                    module.training = modes[key]
+                for parameter, gradient in gradients:
+                    parameter.grad = gradient
+                random.setstate(python_rng)
+                np.random.set_state(numpy_rng)
+                torch.set_rng_state(cpu_rng)
+                if cuda_rng is not None:
+                    torch.cuda.set_rng_state_all(cuda_rng)
+
+        return save_package(
+            args, accelerator, network, manifest, absolute_step, metrics_at_step, reasons,
+            destination="best" if "new_best" in reasons else "current",
+            samples_enabled=sampling_enabled,
+            sample_callback=generate_samples if sampling_enabled else None,
+        )
+
+    def _experiment_package_reasons(
+        self, args, accelerator, *, absolute_step, epoch_due=False, sample_epoch=None,
+        final_due=False, new_best=False, sampling_enabled=False, include_periodic=True,
+    ):
+        """Let main choose one shared set of package reasons before collectives."""
+        decision = None
+        if accelerator.is_main_process:
+            try:
+                reasons = []
+                if include_periodic and absolute_step > 0 and args.save_every_n_steps is not None and absolute_step % args.save_every_n_steps == 0:
+                    reasons.append("periodic")
+                if epoch_due:
+                    reasons.append("epoch")
+                if final_due:
+                    reasons.append("final")
+                if new_best:
+                    reasons.append("new_best")
+                if sampling_enabled and should_sample_images(args, absolute_step, epoch=sample_epoch):
+                    reasons.append("sample")
+                decision = {"reasons": reasons, "error": None}
+            except Exception as error:
+                decision = {"reasons": None, "error": f"{type(error).__name__}: {error}"}
+        if getattr(accelerator, "num_processes", 1) > 1:
+            status = [decision]
+            broadcast_object_list(status)
+            decision = status[0]
+        if decision["error"] is not None:
+            raise RuntimeError(f"experiment package decision failed: {decision['error']}")
+        return decision["reasons"]
+
     def train(self, args):
         self.validate_training_inputs(args)
         if not self._validate_args_and_init(args):
@@ -1398,7 +1592,17 @@ class NetworkTrainer:
         train_dataset_group, collator, current_epoch = self._build_dataset(args)
         self.validate_training_dataset(args, train_dataset_group)
         accelerator, weight_dtype, dit_dtype, dit_weight_dtype, vae_dtype = self._prepare_accelerator_and_dtypes(args)
-        sample_parameters, sample_resources = self.prepare_sampling(args, accelerator, vae_dtype)
+        if getattr(args, "experiment_dir", None):
+            sampling_configured = bool(args.sample_prompts) and any(
+                (getattr(args, "sample_at_first", False), args.sample_every_n_steps is not None,
+                 args.sample_every_n_epochs is not None)
+            )
+            sample_parameters, sample_resources = (
+                self._prepare_experiment_sampling(args, accelerator, vae_dtype)
+                if sampling_configured else (None, None)
+            )
+        else:
+            sample_parameters, sample_resources = self.prepare_sampling(args, accelerator, vae_dtype)
         transformer = self._load_dit_and_swap(args, accelerator, dit_weight_dtype)
         # the network factories take a LyCORIS-compatible vae argument; the sampling
         # resources fill it only when they are a plain module (single-VAE architectures)
@@ -1528,16 +1732,25 @@ class NetworkTrainer:
 
         blueprint_generator = BlueprintGenerator(ConfigSanitizer())
         logger.info(f"Load dataset config from {args.dataset_config}")
-        user_config = config_utils.load_user_config(args.dataset_config)
+        experiment_root = getattr(args, "_experiment_root", None)
+        user_config = config_utils.load_user_config(args.dataset_config, experiment_root=experiment_root)
         blueprint = blueprint_generator.generate(user_config, args, architecture=self.architecture)
+        if any(item.params.role is not None for item in blueprint.dataset_group.datasets):
+            raise ValueError(
+                f"{args.dataset_config}: validation role is not accepted as training data; "
+                "put these sets in val_dataset_config and keep dataset_config for training only"
+            )
         train_dataset_group = config_utils.generate_dataset_group_by_blueprint(
             blueprint.dataset_group,
             training=True,
             num_timestep_buckets=self.num_timestep_buckets,
             shared_epoch=current_epoch,
+            experiment_root=experiment_root,
         )
 
         config_utils.validate_dataset_sources(train_dataset_group, args.dataset_config)
+        if getattr(args, "experiment_dir", None):
+            config_utils.validate_training_cache_bindings(train_dataset_group, args.dataset_config)
         if train_dataset_group.num_train_items == 0:
             raise ValueError(
                 f"{args.dataset_config}: No training items found in the dataset. Please ensure that the latent/Text Encoder cache has been created beforehand."
@@ -1774,6 +1987,33 @@ class NetworkTrainer:
 
     def _register_hooks_and_resume(self, args, accelerator, network):
         # before resuming make hook for saving/loading to save/load the network weights only
+        self.validation_resume_step = 0
+
+        if getattr(args, "experiment_dir", None):
+            from musubi_tuner.training.experiment_states import load_package
+
+            def save_experiment_model_hook(models, weights, output_dir):
+                # Accelerator's model list may contain the frozen DiT before a DDP
+                # wrapper around LoRA. Its sole model file must still be the adapter.
+                adapter = accelerator.unwrap_model(network)
+                weights[:] = [
+                    {key: tensor.detach().to(dtype=torch.float32) if tensor.is_floating_point() else tensor.detach()
+                     for key, tensor in adapter.state_dict().items()}
+                ]
+
+            def load_experiment_model_hook(models, input_dir):
+                models[:] = [accelerator.unwrap_model(network)]
+
+            accelerator.register_save_state_pre_hook(save_experiment_model_hook)
+            accelerator.register_load_state_pre_hook(load_experiment_model_hook)
+            if args.resume:
+                if args.resume_from_huggingface:
+                    raise ValueError("experiment_dir resume requires a local current/best package; select its folder with --resume")
+                self.validation_resume_step = load_package(
+                    args, accelerator, network, self.validation_manifest, args.resume
+                )
+            return
+
         def save_model_hook(models, weights, output_dir):
             # pop weights of other models than network to save only network weights
             # only main process or deepspeed https://github.com/huggingface/diffusers/issues/2606
@@ -1788,6 +2028,11 @@ class NetworkTrainer:
                 # print(f"save model hook: {len(weights)} weights will be saved")
 
         def load_model_hook(models, input_dir):
+            if getattr(args, "val_dataset_config", None):
+                manifest = getattr(self, "validation_manifest", None)
+                from musubi_tuner.training.validation_state import load_validation_resume_step
+
+                self.validation_resume_step = load_validation_resume_step(accelerator, input_dir, args, manifest)
             # remove models except network
             remove_indices = []
             for i, model in enumerate(models):
@@ -1828,6 +2073,13 @@ class NetworkTrainer:
         network_dtype,
     ):
         is_main_process = accelerator.is_main_process
+        validation_enabled = getattr(self, "validation_manifest", None) is not None
+        experiment_enabled = bool(getattr(args, "experiment_dir", None))
+        package_sampling_enabled = experiment_enabled and sample_parameters is not None
+        resume_start_step = getattr(self, "validation_resume_step", 0) if validation_enabled else 0
+        published_steps = {resume_start_step} if experiment_enabled and args.resume else set()
+        published_reasons = {}
+        last_completed_metrics = None
 
         self.on_train_start(args, accelerator, network, transformer, optimizer)
 
@@ -2040,13 +2292,14 @@ class NetworkTrainer:
                 )
 
         # For --sample_at_first
-        if should_sample_images(args, global_step, epoch=0):
+        initial_step_label = resume_start_step if validation_enabled else global_step
+        if not experiment_enabled and should_sample_images(args, initial_step_label, epoch=0):
             optimizer_eval_fn()
-            _do_sample(0, global_step)
+            _do_sample(0, initial_step_label)
             optimizer_train_fn()
         if len(accelerator.trackers) > 0:
             # log empty object to commit the sample images to wandb
-            accelerator.log({}, step=0)
+            accelerator.log({}, step=initial_step_label)
 
         # training loop
 
@@ -2061,7 +2314,40 @@ class NetworkTrainer:
 
         optimizer_train_fn()  # Set training mode
 
-        for epoch in range(epoch_to_start, num_train_epochs):
+        if validation_enabled:
+            initial_metrics = self._run_validation_boundary(
+                args, accelerator, transformer, network, noise_scheduler, dit_dtype, network_dtype,
+                absolute_step=resume_start_step, completed=False, final=False,
+            )
+            if experiment_enabled:
+                from musubi_tuner.training.experiment_states import decide_best_event
+
+                new_best = decide_best_event(args, accelerator, network, self.validation_manifest, initial_metrics)
+                if args.resume:
+                    if new_best:
+                        from musubi_tuner.training.experiment_states import promote_published_current_to_best
+
+                        promote_published_current_to_best(
+                            args, accelerator, network, self.validation_manifest, resume_start_step, initial_metrics,
+                        )
+                else:
+                    reasons = self._experiment_package_reasons(
+                        args, accelerator, absolute_step=resume_start_step, sample_epoch=0,
+                        new_best=new_best, sampling_enabled=package_sampling_enabled,
+                    )
+                    if reasons:
+                        self._run_experiment_package_event(
+                            args, accelerator, transformer, network, self.validation_manifest,
+                            absolute_step=resume_start_step, reasons=reasons, metrics_at_step=initial_metrics,
+                            sample_resources=sample_resources, sample_parameters=sample_parameters, dit_dtype=dit_dtype,
+                            epoch=0,
+                        )
+                        published_steps.add(resume_start_step)
+                        published_reasons[resume_start_step] = set(reasons)
+
+        epochs = itertools.count(epoch_to_start) if validation_enabled else range(epoch_to_start, num_train_epochs)
+        for epoch in epochs:
+            epoch_start_global_step = global_step
             accelerator.print(f"\nepoch {epoch + 1}/{num_train_epochs}")
             current_epoch.value = epoch + 1
 
@@ -2129,31 +2415,88 @@ class NetworkTrainer:
                     keys_scaled, mean_norm, maximum_norm = None, None, None
 
                 # Checks if the accelerator has performed an optimization step behind the scenes
-                if accelerator.sync_gradients:
+                if validation_enabled:
+                    completed_update = accelerator.sync_gradients and not accelerator.optimizer_step_was_skipped
+                    self._assert_validation_update_agreement(
+                        accelerator,
+                        sync_gradients=accelerator.sync_gradients,
+                        completed_update=completed_update,
+                        absolute_step=resume_start_step + global_step + int(completed_update),
+                    )
+                else:
+                    completed_update = accelerator.sync_gradients
+                if completed_update:
                     if global_step == 0:
                         progress_bar.reset()  # exclude first step from progress bar, because it may take long due to initializations
                     progress_bar.update(1)
                     global_step += 1
+                    step_label = resume_start_step + global_step if validation_enabled else global_step
+
+                    metrics_at_step = None
+                    if validation_enabled:
+                        metrics_at_step = self._run_validation_boundary(
+                            args, accelerator, transformer, network, noise_scheduler, dit_dtype, network_dtype,
+                            absolute_step=step_label, completed=True, final=global_step >= args.max_train_steps,
+                        )
+                    last_completed_metrics = metrics_at_step
+
+                    if experiment_enabled:
+                        from musubi_tuner.training.experiment_states import decide_best_event
+
+                        final_due = global_step >= args.max_train_steps
+                        epoch_due = (
+                            args.save_every_n_epochs is not None
+                            and (epoch + 1) % args.save_every_n_epochs == 0
+                            and (step + 1 == len(train_dataloader) or final_due)
+                        )
+                        new_best = metrics_at_step is not None and decide_best_event(
+                            args, accelerator, network, self.validation_manifest, metrics_at_step
+                        )
+                        sample_epoch = epoch + 1 if step + 1 == len(train_dataloader) or final_due else None
+                        reasons = self._experiment_package_reasons(
+                            args, accelerator, absolute_step=step_label, epoch_due=epoch_due,
+                            sample_epoch=sample_epoch, final_due=final_due, new_best=new_best,
+                            sampling_enabled=package_sampling_enabled,
+                        )
+                        if reasons:
+                            self._run_experiment_package_event(
+                                args, accelerator, transformer, network, self.validation_manifest,
+                                absolute_step=step_label, reasons=reasons, metrics_at_step=metrics_at_step,
+                                sample_resources=sample_resources, sample_parameters=sample_parameters,
+                                dit_dtype=dit_dtype, epoch=epoch + 1 if epoch_due else None,
+                            )
+                            published_steps.add(step_label)
+                            published_reasons[step_label] = set(reasons)
 
                     # to avoid calling optimizer_eval_fn() too frequently, we call it only when we need to sample images or save the model
-                    should_sampling = should_sample_images(args, global_step, epoch=None)
-                    should_saving = args.save_every_n_steps is not None and global_step % args.save_every_n_steps == 0
+                    should_sampling = should_sample_images(args, step_label, epoch=None)
+                    should_saving = args.save_every_n_steps is not None and step_label % args.save_every_n_steps == 0
 
-                    if should_sampling or should_saving:
+                    if not experiment_enabled and (should_sampling or should_saving):
                         optimizer_eval_fn()
                         if should_sampling:
-                            _do_sample(None, global_step)
+                            _do_sample(None, step_label)
 
                         if should_saving:
                             accelerator.wait_for_everyone()
                             if accelerator.is_main_process:
-                                ckpt_name = train_utils.get_step_ckpt_name(args.output_name, global_step)
-                                save_model(ckpt_name, accelerator.unwrap_model(network), global_step, epoch)
+                                ckpt_name = train_utils.get_step_ckpt_name(args.output_name, step_label)
+                                save_model(ckpt_name, accelerator.unwrap_model(network), step_label, epoch)
 
-                                if args.save_state:
+                            if args.save_state:
+                                if validation_enabled:
+                                    from musubi_tuner.training.validation_state import build_validation_state
+
+                                    accelerator.wait_for_everyone()
+                                    state = build_validation_state(args, self.validation_manifest, step_label)
+                                    train_utils.save_and_remove_state_stepwise(
+                                        args, accelerator, step_label, validation_state=state
+                                    )
+                                elif accelerator.is_main_process:
                                     train_utils.save_and_remove_state_stepwise(args, accelerator, global_step)
 
-                                remove_step_no = train_utils.get_remove_step_no(args, global_step)
+                            if accelerator.is_main_process:
+                                remove_step_no = train_utils.get_remove_step_no(args, step_label)
                                 if remove_step_no is not None:
                                     remove_ckpt_name = train_utils.get_step_ckpt_name(args.output_name, remove_step_no)
                                     remove_model(remove_ckpt_name)
@@ -2168,46 +2511,96 @@ class NetworkTrainer:
                 if args.scale_weight_norms:
                     progress_bar.set_postfix(**{**max_mean_logs, **logs})
 
-                if len(accelerator.trackers) > 0:
+                if len(accelerator.trackers) > 0 and (not validation_enabled or completed_update):
                     logs = self.generate_step_logs(
                         args, current_loss, avr_loss, lr_scheduler, lr_descriptions, optimizer, keys_scaled, mean_norm, maximum_norm
                     )
                     logs.update(loss_metrics)
                     logs.update(grad_metrics)
                     logs.update(self.extra_step_logs(args, logs))
-                    accelerator.log(logs, step=global_step)
+                    accelerator.log(logs, step=resume_start_step + global_step if validation_enabled else global_step)
 
                 if global_step >= args.max_train_steps:
                     break
 
             self.on_epoch_end(args, accelerator, network, transformer, epoch + 1)
 
-            if len(accelerator.trackers) > 0:
+            if len(accelerator.trackers) > 0 and (
+                not validation_enabled or global_step > epoch_start_global_step
+            ):
                 logs = {"loss/epoch": loss_recorder.moving_average}
-                accelerator.log(logs, step=epoch + 1)
+                accelerator.log(logs, step=resume_start_step + global_step if validation_enabled else epoch + 1)
 
             accelerator.wait_for_everyone()
 
             # save model at the end of epoch if needed
-            optimizer_eval_fn()
-            if args.save_every_n_epochs is not None:
-                saving = (epoch + 1) % args.save_every_n_epochs == 0 and (epoch + 1) < num_train_epochs
+            if not experiment_enabled:
+                optimizer_eval_fn()
+            if experiment_enabled and global_step > epoch_start_global_step:
+                absolute_step = resume_start_step + global_step
+                epoch_due = args.save_every_n_epochs is not None and (epoch + 1) % args.save_every_n_epochs == 0
+                sample_epoch_due = (
+                    package_sampling_enabled and args.sample_every_n_epochs is not None
+                    and (epoch + 1) % args.sample_every_n_epochs == 0
+                )
+                if epoch_due or sample_epoch_due:
+                    reasons = self._experiment_package_reasons(
+                        args, accelerator, absolute_step=absolute_step, epoch_due=epoch_due,
+                        sample_epoch=epoch + 1, sampling_enabled=package_sampling_enabled,
+                        include_periodic=False,
+                    )
+                    missing_reasons = [reason for reason in reasons if reason not in published_reasons.get(absolute_step, ())]
+                    if missing_reasons and absolute_step in published_steps:
+                        from musubi_tuner.training.experiment_states import merge_published_package_reasons
+
+                        merge_published_package_reasons(
+                            args, accelerator, network, self.validation_manifest, absolute_step, missing_reasons,
+                        )
+                        published_reasons[absolute_step].update(missing_reasons)
+                    elif reasons and absolute_step not in published_steps:
+                        self._run_experiment_package_event(
+                            args, accelerator, transformer, network, self.validation_manifest,
+                            absolute_step=absolute_step, reasons=reasons, metrics_at_step=last_completed_metrics,
+                            sample_resources=sample_resources, sample_parameters=sample_parameters,
+                            dit_dtype=dit_dtype, epoch=epoch + 1,
+                        )
+                        published_steps.add(absolute_step)
+                        published_reasons[absolute_step] = set(reasons)
+            if not experiment_enabled and args.save_every_n_epochs is not None:
+                saving = (epoch + 1) % args.save_every_n_epochs == 0 and (
+                    global_step < args.max_train_steps if validation_enabled else (epoch + 1) < num_train_epochs
+                )
                 if is_main_process and saving:
                     ckpt_name = train_utils.get_epoch_ckpt_name(args.output_name, epoch + 1)
-                    save_model(ckpt_name, accelerator.unwrap_model(network), global_step, epoch + 1)
+                    save_model(
+                        ckpt_name, accelerator.unwrap_model(network),
+                        resume_start_step + global_step if validation_enabled else global_step, epoch + 1,
+                    )
 
                     remove_epoch_no = train_utils.get_remove_epoch_no(args, epoch + 1)
                     if remove_epoch_no is not None:
                         remove_ckpt_name = train_utils.get_epoch_ckpt_name(args.output_name, remove_epoch_no)
                         remove_model(remove_ckpt_name)
 
-                    if args.save_state:
+                    if args.save_state and not validation_enabled:
                         train_utils.save_and_remove_state_on_epoch_end(args, accelerator, epoch + 1)
 
-            _do_sample(epoch + 1, global_step)
+                if saving and args.save_state and validation_enabled:
+                    from musubi_tuner.training.validation_state import build_validation_state
+
+                    accelerator.wait_for_everyone()
+                    state = build_validation_state(args, self.validation_manifest, resume_start_step + global_step)
+                    train_utils.save_and_remove_state_on_epoch_end(
+                        args, accelerator, epoch + 1, validation_state=state
+                    )
+
+            if not experiment_enabled and (not validation_enabled or global_step > epoch_start_global_step):
+                _do_sample(epoch + 1, resume_start_step + global_step if validation_enabled else global_step)
             optimizer_train_fn()
 
             # end of epoch
+            if validation_enabled and global_step >= args.max_train_steps:
+                break
 
         # metadata["ss_epoch"] = str(num_train_epochs)
         metadata["ss_training_finished_at"] = str(time.time())
@@ -2215,14 +2608,24 @@ class NetworkTrainer:
         if is_main_process:
             network = accelerator.unwrap_model(network)
 
-        accelerator.end_training()
-        optimizer_eval_fn()
+        if not experiment_enabled and validation_enabled and (args.save_state or args.save_state_on_train_end):
+            from musubi_tuner.training.validation_state import build_validation_state
 
-        if is_main_process and (args.save_state or args.save_state_on_train_end):
+            state = build_validation_state(args, self.validation_manifest, resume_start_step + global_step)
+            train_utils.save_state_on_train_end(args, accelerator, validation_state=state)
+
+        accelerator.end_training()
+        if not experiment_enabled:
+            optimizer_eval_fn()
+
+        if not experiment_enabled and not validation_enabled and is_main_process and (args.save_state or args.save_state_on_train_end):
             train_utils.save_state_on_train_end(args, accelerator)
 
-        if is_main_process:
+        if is_main_process and not experiment_enabled:
             ckpt_name = train_utils.get_last_ckpt_name(args.output_name)
-            save_model(ckpt_name, network, global_step, num_train_epochs, force_sync_upload=True)
+            save_model(
+                ckpt_name, network, resume_start_step + global_step if validation_enabled else global_step,
+                epoch + 1 if validation_enabled else num_train_epochs, force_sync_upload=True,
+            )
 
             logger.info("model saved.")

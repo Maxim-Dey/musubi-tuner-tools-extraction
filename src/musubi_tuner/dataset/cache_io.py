@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from typing import Optional, TYPE_CHECKING
 
@@ -18,7 +19,17 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def save_latent_cache_qwen_image(item_info: ItemInfo, latent: torch.Tensor):
+def source_image_sha256(image_path: str) -> str:
+    digest = hashlib.sha256()
+    with open(image_path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def save_latent_cache_qwen_image(
+    item_info: ItemInfo, latent: torch.Tensor, *, source_image_sha256: Optional[str] = None
+):
     """Original Qwen image cache: [C,1,H,W], unchanged serialized format."""
     if latent.ndim != 4 or latent.shape[1] != 1:
         raise ValueError(f"{item_info.item_key}: latent must have shape [C,1,H,W]; cache an original image")
@@ -26,7 +37,8 @@ def save_latent_cache_qwen_image(item_info: ItemInfo, latent: torch.Tensor):
     dtype_str = dtype_to_str(latent.dtype)
     sd = {f"latents_{F}x{H}x{W}_{dtype_str}": latent.detach().cpu().contiguous()}
 
-    save_latent_cache_common(item_info, sd, ARCHITECTURE_QWEN_IMAGE_FULL)
+    additional = {"source_image_sha256": source_image_sha256} if source_image_sha256 is not None else None
+    save_latent_cache_common(item_info, sd, ARCHITECTURE_QWEN_IMAGE_FULL, additional_metadata=additional)
 
 
 def _merge_cache_metadata(required: dict[str, str], additional: Optional[dict[str, str]]) -> dict[str, str]:
@@ -65,13 +77,22 @@ def save_latent_cache_common(
     save_file(sd, item_info.latent_cache_path, metadata=metadata)
 
 
-def save_text_encoder_output_cache_qwen_image(item_info: ItemInfo, embed: torch.Tensor):
+def save_text_encoder_output_cache_qwen_image(
+    item_info: ItemInfo, embed: torch.Tensor, *, source_image_sha256: Optional[str] = None
+):
     """Qwen-Image architecture."""
     sd = {}
     dtype_str = dtype_to_str(embed.dtype)
     sd[f"varlen_vl_embed_{dtype_str}"] = embed.detach().cpu()
 
-    save_text_encoder_output_cache_common(item_info, sd, ARCHITECTURE_QWEN_IMAGE_FULL)
+    additional = {"source_image_sha256": source_image_sha256} if source_image_sha256 is not None else None
+    save_text_encoder_output_cache_common(
+        item_info,
+        sd,
+        ARCHITECTURE_QWEN_IMAGE_FULL,
+        merge_existing=source_image_sha256 is None,
+        additional_metadata=additional,
+    )
 
 
 def save_text_encoder_output_cache_common(

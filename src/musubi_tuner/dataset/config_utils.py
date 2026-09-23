@@ -4,6 +4,7 @@ from dataclasses import (
     dataclass,
 )
 import functools
+import os
 import random
 from textwrap import dedent
 import json
@@ -22,8 +23,9 @@ import toml
 import voluptuous
 from voluptuous import Any, ExactSequence, MultipleInvalid, Object, Schema
 
-from musubi_tuner.dataset.image_video_dataset import DatasetGroup, ImageDataset
+from musubi_tuner.dataset.image_video_dataset import DatasetGroup, ImageDataset, ItemInfo
 from musubi_tuner.dataset.bucket import BucketSelector
+from musubi_tuner.dataset.media_utils import glob_images
 
 import logging
 
@@ -54,6 +56,7 @@ class BaseDatasetParams:
 class ImageDatasetParams(BaseDatasetParams):
     image_directory: Optional[str] = None
     image_jsonl_file: Optional[str] = None
+    role: Optional[str] = None
 
 
 @dataclass
@@ -102,6 +105,7 @@ class ConfigSanitizer:
         "image_directory": str,
         "image_jsonl_file": str,
         "cache_directory": str,
+        "role": voluptuous.In(("val_familiar", "val_unfamiliar")),
     }
 
     # options handled by argparse but not handled by user config
@@ -182,6 +186,7 @@ class BlueprintGenerator:
         general_config = sanitized_user_config.get("general", {})
 
         dataset_blueprints = []
+        roles = []
         for dataset_config in sanitized_user_config.get("datasets", []):
             is_image_dataset = True
             source_keys = [key for key in ("image_directory", "image_jsonl_file") if dataset_config.get(key)]
@@ -196,7 +201,25 @@ class BlueprintGenerator:
                 raise ValueError(
                     f"{source}: datasets[{len(dataset_blueprints)}].cache_directory is required for image_jsonl_file; set a cache location"
                 )
+            roles.append(params.role)
+            if params.role is not None and (type(params.batch_size) is not int or params.batch_size != 1):
+                raise ValueError(
+                    f"{source}: datasets[{len(dataset_blueprints)}].batch_size must be 1 for validation; set batch_size=1"
+                )
+            if params.role is not None and (type(params.num_repeats) is not int or params.num_repeats != 1):
+                raise ValueError(
+                    f"{source}: datasets[{len(dataset_blueprints)}].num_repeats must be 1 for validation; set num_repeats=1"
+                )
             dataset_blueprints.append(DatasetBlueprint(is_image_dataset, params))
+
+        if any(role is not None for role in roles) and sorted(roles, key=lambda role: role or "") != [
+            "val_familiar",
+            "val_unfamiliar",
+        ]:
+            raise ValueError(
+                f"{source}: validation datasets require exactly one val_familiar and one val_unfamiliar role; "
+                "set role on each of two datasets"
+            )
 
         dataset_group_blueprint = DatasetGroupBlueprint(dataset_blueprints)
 
@@ -229,12 +252,14 @@ def generate_dataset_group_by_blueprint(
     training: bool = False,
     num_timestep_buckets: Optional[int] = None,
     shared_epoch: SharedEpoch = None,
+    seed: Optional[int] = None,
+    experiment_root: Optional[str] = None,
 ) -> DatasetGroup:
     datasets: List[ImageDataset] = []
 
     for dataset_blueprint in dataset_group_blueprint.datasets:
         dataset_params = asdict(dataset_blueprint.params)
-        dataset = ImageDataset(**dataset_params)
+        dataset = ImageDataset(**dataset_params, experiment_root=experiment_root)
         datasets.append(dataset)
 
     # assertion
@@ -270,7 +295,7 @@ def generate_dataset_group_by_blueprint(
 
     # make buckets first because it determines the length of dataset
     # and set the same seed for all datasets
-    seed = random.randint(0, 2**31)  # actual seed is seed + epoch_no
+    seed = random.randint(0, 2**31) if seed is None else seed  # actual seed is seed + epoch_no
     for i, dataset in enumerate(datasets):
         # logger.info(f"[Dataset {i}]")
         dataset.set_seed(seed, shared_epoch)
@@ -280,7 +305,7 @@ def generate_dataset_group_by_blueprint(
     return DatasetGroup(datasets)
 
 
-def load_user_config(file: str) -> dict:
+def load_user_config(file: str, experiment_root: Optional[str] = None) -> dict:
     file: Path = Path(file)
     if not file.is_file():
         raise ValueError(f"file not found / ファイルが見つかりません: {file}")
@@ -307,6 +332,16 @@ def load_user_config(file: str) -> dict:
 
     if not isinstance(config, dict):
         raise ValueError(f"{file}: dataset configuration must be a table/object; provide general and datasets")
+
+    if experiment_root is not None and isinstance(config.get("datasets"), list):
+        root = Path(experiment_root)
+        for dataset in config["datasets"]:
+            if not isinstance(dataset, dict):
+                continue
+            for key in ("image_directory", "image_jsonl_file", "cache_directory"):
+                value = dataset.get(key)
+                if isinstance(value, str) and value and not Path(value).is_absolute():
+                    dataset[key] = str((root / value).resolve())
 
     return config
 
@@ -352,6 +387,8 @@ def validate_dataset_sources(group, source):
 
     for index, dataset in enumerate(group.datasets):
         label = f"{source}: dataset {index + 1}"
+        if dataset.role is not None:
+            label += f" ({dataset.role})"
         if any(size < 16 for size in dataset.resolution):
             raise ValueError(f"{label}: resolution must be usable for image packing (at least 16); increase it")
         if dataset.enable_bucket and min(dataset.resolution) < 32 and dataset.resolution[0] * dataset.resolution[1] < 1024:
@@ -383,6 +420,128 @@ def validate_dataset_sources(group, source):
                 raise ValueError(
                     f"{label}: item {item_index + 1}: source {image_path!r} selects unusable bucket {bucket}; "
                     "use images at least 16 pixels in each dimension or disable bucket_no_upscale"
+                )
+
+
+def validate_training_cache_bindings(group: DatasetGroup, config_source: str) -> None:
+    """Require one existing Qwen latent/text pair for each declared train source."""
+    from PIL import Image
+
+    for index, dataset in enumerate(group.datasets):
+        label = f"{config_source}: dataset {index + 1}"
+        expected_latent: dict[Path, str] = {}
+        expected_text: dict[Path, str] = {}
+        for item_index in range(len(dataset.datasource)):
+            try:
+                image_path, caption = dataset.datasource.get_caption(item_index)
+                with Image.open(image_path) as image:
+                    item = ItemInfo(image_path, caption, image.size)
+            except (OSError, ValueError) as error:
+                raise ValueError(f"{label}: train source item {item_index + 1} is invalid: {error}; correct the source") from error
+            for kind, expected, path in (
+                ("latent", expected_latent, dataset.get_latent_cache_path(item)),
+                ("text", expected_text, dataset.get_text_encoder_output_cache_path(item)),
+            ):
+                cache_path = Path(path).resolve()
+                if cache_path in expected:
+                    raise ValueError(
+                        f"{label}: train sources {expected[cache_path]!r} and {image_path!r} share {kind} cache "
+                        f"{cache_path}; use unique image stems and cache paths"
+                    )
+                expected[cache_path] = image_path
+
+        for kind, expected, files in (
+            ("latent", expected_latent, dataset.get_all_latent_cache_files()),
+            ("text", expected_text, dataset.get_all_text_encoder_output_cache_files()),
+        ):
+            actual = {Path(path).resolve() for path in files}
+            missing = set(expected) - actual
+            extra = actual - set(expected)
+            if missing:
+                path = min(missing)
+                raise ValueError(
+                    f"{label}: train source {expected[path]!r} is missing {kind} cache {path}; rebuild its cache pair"
+                )
+            if extra:
+                path = min(extra)
+                raise ValueError(
+                    f"{label}: stale {kind} cache {path} has no declared train source; remove or rebuild stale cache pairs"
+                )
+
+
+def validate_role_aware_sources(group: DatasetGroup, config_source: str) -> None:
+    """Check every declared validation source before cache commands load a model.
+
+    Ordinary directory readers filter images without captions, so inspect the
+    unfiltered directory here. Legacy unroled datasets retain their behavior.
+    """
+    from PIL import Image
+
+    if not any(dataset.role is not None for dataset in group.datasets):
+        return
+
+    path_owners: dict[str, tuple[str, str]] = {}
+    latent_preprocessing: dict[str, tuple[tuple[int, int], bool, bool, tuple[int, int]]] = {}
+    for dataset in group.datasets:
+        role = dataset.role
+        if role is None:
+            raise ValueError(f"{config_source}: validation role is missing; set role on both datasets")
+        if dataset.image_directory is not None:
+            if not dataset.caption_extension:
+                raise ValueError(
+                    f"{config_source}: {role}: caption_extension is required for image_directory; "
+                    "set the caption file extension"
+                )
+            raw_images = glob_images(dataset.image_directory)
+            if not raw_images:
+                raise ValueError(f"{config_source}: {role}: no images found; add captioned images to this set")
+            for image_path in raw_images:
+                caption_path = os.path.splitext(image_path)[0] + dataset.caption_extension
+                if not os.path.isfile(caption_path):
+                    raise ValueError(
+                        f"{config_source}: {role}: {image_path}: caption {caption_path} is missing; "
+                        "create the matching caption file"
+                    )
+        datasource = dataset.datasource
+        if len(datasource) == 0:
+            raise ValueError(f"{config_source}: {role}: no images found; add captioned images to this set")
+        selector = BucketSelector(dataset.resolution, dataset.enable_bucket, dataset.bucket_no_upscale, dataset.architecture)
+        for index in range(len(datasource)):
+            try:
+                image_path, caption = datasource.get_caption(index)
+                with Image.open(image_path) as image:
+                    original_size = image.size
+                    image.verify()
+                bucket = selector.get_bucket_resolution(original_size)
+            except (OSError, ValueError) as error:
+                raise ValueError(
+                    f"{config_source}: {role} item {index + 1}: invalid image or caption: {error}; "
+                    "correct the source file"
+                ) from error
+            if any(size < 16 for size in bucket):
+                raise ValueError(
+                    f"{config_source}: {role} item {index + 1}: {image_path} selects unusable bucket {bucket}; "
+                    "use a larger image or disable bucket_no_upscale"
+                )
+            item = ItemInfo(image_path, caption, original_size, bucket)
+            source_key = os.path.normcase(os.path.realpath(image_path))
+            owner = (source_key, caption)
+            latent_cache_path = dataset.get_latent_cache_path(item)
+            for cache_path in (latent_cache_path, dataset.get_text_encoder_output_cache_path(item)):
+                cache_key = os.path.normcase(os.path.realpath(cache_path))
+                previous = path_owners.setdefault(cache_key, owner)
+                if previous != owner:
+                    raise ValueError(
+                        f"{config_source}: {role} item {index + 1}: {image_path} maps to cache {cache_path} "
+                        "already assigned to another source or caption; use unique image stems or cache directories"
+                    )
+            latent_key = os.path.normcase(os.path.realpath(latent_cache_path))
+            preprocessing = (tuple(dataset.resolution), dataset.enable_bucket, dataset.bucket_no_upscale, bucket)
+            previous_preprocessing = latent_preprocessing.setdefault(latent_key, preprocessing)
+            if previous_preprocessing != preprocessing:
+                raise ValueError(
+                    f"{config_source}: {role} item {index + 1}: latent cache {latent_cache_path} is shared "
+                    "with a different bucket or preprocessing setting; use distinct cache directories or matching settings"
                 )
 
 

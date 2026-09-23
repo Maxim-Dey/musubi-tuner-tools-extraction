@@ -1,0 +1,21 @@
+{
+  "purpose": "two independent no-validation four-update runs",
+  "separate_from_stage5_budget": true,
+  "maximum_optimizer_updates": 8,
+  "baseline_run": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90",
+  "selected_adapter": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/val_training_states/val-loss/qwen_image_lora-step-12/model.safetensors",
+  "selected_adapter_sha256": "a3e9bb509819efd3f2b15072f8844001ff201637fbb847694ab5272bcfb4883b",
+  "probe_sha256": "4c86532a37198ce62c33bbaca66a7f93ba35dd2b626961fc34f8006ad20be07d",
+  "configs": {
+    "off-a": {
+      "path": "/workspace/musubi-val-loss-tests/20260923T075021Z-offoff-f6ce8c/experiments/off-a/train.toml",
+      "sha256": "8ea5ff5aab8d21741150c7b91a0fd77620705c2bbe65fdf3efb045ecd29bbb68",
+      "dataset_sha256": "72813166f1da5be9f0db80a2d3a2302052a516fdbb2815636f79559f0a2f2924"
+    },
+    "off-b": {
+      "path": "/workspace/musubi-val-loss-tests/20260923T075021Z-offoff-f6ce8c/experiments/off-b/train.toml",
+      "sha256": "4ad8682b6cbc52f51355f9c5c7625980b09f84c69ff1bf8dfee20ae907263c1e",
+      "dataset_sha256": "72813166f1da5be9f0db80a2d3a2302052a516fdbb2815636f79559f0a2f2924"
+    }
+  }
+}

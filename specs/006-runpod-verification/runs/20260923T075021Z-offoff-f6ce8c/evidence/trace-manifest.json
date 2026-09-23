@@ -1,0 +1,43 @@
+{
+  "run_id": "20260923T075021Z-offoff-f6ce8c",
+  "gpu_compute_apps_after": "none",
+  "cases": {
+    "OFFA": {
+      "exit_code": 0,
+      "updates": 4
+    },
+    "OFFB": {
+      "exit_code": 0,
+      "updates": 4
+    },
+    "COMPARE": {
+      "exit_code": 0,
+      "updates": 0
+    }
+  },
+  "total_optimizer_updates": 8,
+  "maximum_optimizer_updates": 8,
+  "files": {
+    "OFFA": {
+      "path": "/workspace/musubi-val-loss-tests/20260923T075021Z-offoff-f6ce8c/evidence/OFFA/trace/trace.json",
+      "sha256": "c8f87b559c6f972f16e3a6173a139ed749cf60330d69e6d758fc2cc8c813972d",
+      "bytes": 1238015
+    },
+    "OFFB": {
+      "path": "/workspace/musubi-val-loss-tests/20260923T075021Z-offoff-f6ce8c/evidence/OFFB/trace/trace.json",
+      "sha256": "2a2b9adade6ac55d6a9291d2e50f904e0ad6af1c00827dc43631dba711282a9c",
+      "bytes": 1238016
+    },
+    "comparison": {
+      "path": "/workspace/musubi-val-loss-tests/20260923T075021Z-offoff-f6ce8c/evidence/comparison.json",
+      "sha256": "ad5ad09d5648b949a31e96a991955f4116b2552694a71b6bdb7f6ca51c358a67",
+      "bytes": 3227
+    },
+    "comparator": {
+      "path": "/workspace/musubi-val-loss-tests/20260923T075021Z-offoff-f6ce8c/scripts/compare-off-off.py",
+      "sha256": "8ab2b8c123a47520b35754cd5b4de742c4ce1c9d06f24799fcac8c406c4f2ffa",
+      "bytes": 3885
+    }
+  },
+  "comparison_status": "DIVERGED"
+}

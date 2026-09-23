@@ -1,7 +1,9 @@
 import argparse
+from pathlib import Path
 from typing import Optional
 
 import torch
+import toml
 import accelerate
 from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer
 
@@ -13,8 +15,10 @@ from musubi_tuner.dataset.image_video_dataset import (
     ItemInfo,
     save_text_encoder_output_cache_qwen_image,
 )
+from musubi_tuner.dataset.cache_io import source_image_sha256
 
 import musubi_tuner.cache_text_encoder_outputs as cache_text_encoder_outputs
+from musubi_tuner.training.experiment_paths import rebase_path, resolve_experiment_root
 import logging
 
 from musubi_tuner.qwen_image import qwen_image_utils
@@ -29,6 +33,7 @@ def encode_and_save_batch(
     batch: list[ItemInfo],
     device: torch.device,
     accelerator: Optional[accelerate.Accelerator],
+    roles: Optional[list[Optional[str]]] = None,
 ):
     prompts = [item.caption for item in batch]
     with torch.no_grad():
@@ -41,7 +46,9 @@ def encode_and_save_batch(
             embed, mask = qwen_image_utils.get_qwen_prompt_embeds(tokenizer, text_encoder, prompts)
     for item, (embed_i, mask_i) in zip(batch, zip(embed, mask)):
         txt_len = mask_i.to(dtype=torch.bool).sum().item()
-        save_text_encoder_output_cache_qwen_image(item, embed_i[:txt_len])
+        role = roles[item.dataset_index] if roles is not None else None
+        digest = source_image_sha256(item.item_key) if role is not None else None
+        save_text_encoder_output_cache_qwen_image(item, embed_i[:txt_len], source_image_sha256=digest)
 
 
 def main():
@@ -49,6 +56,37 @@ def main():
     parser = qwen_image_setup_parser(parser)
 
     args = parser.parse_args()
+    toml_experiment_dir = None
+    if args.train_config is not None:
+        selected_train_config = Path(args.train_config).resolve()
+        if not selected_train_config.is_file():
+            raise ValueError(f"--train_config={args.train_config!r}: file not found; select train.toml")
+        for section, values in toml.load(selected_train_config).items():
+            if isinstance(values, dict):
+                if "experiment_dir" in values:
+                    toml_experiment_dir = values["experiment_dir"]
+            elif section == "experiment_dir":
+                toml_experiment_dir = values
+    experiment_dir = args.experiment_dir if args.experiment_dir is not None else toml_experiment_dir
+    if experiment_dir is not None:
+        if not isinstance(experiment_dir, str) or not experiment_dir:
+            raise ValueError("experiment_dir: expected a nonempty path; set a directory")
+        root = resolve_experiment_root(experiment_dir, args.train_config)
+        if args.train_config is not None and selected_train_config != root / "train.toml":
+            raise ValueError(
+                f"--train_config={args.train_config!r} conflicts with experiment_dir={root}; "
+                f"select {root / 'train.toml'}"
+            )
+        dataset_config = Path(rebase_path(args.dataset_config, root))
+        allowed_datasets = (root / "train-dataset.toml", root / "val-dataset.toml")
+        if dataset_config not in allowed_datasets:
+            raise ValueError(
+                f"--dataset_config={args.dataset_config!r} conflicts with experiment_dir={root}; "
+                f"select {allowed_datasets[0]} or {allowed_datasets[1]}"
+            )
+        args.experiment_dir = str(root)
+        args.dataset_config = str(dataset_config)
+        args.text_encoder = rebase_path(args.text_encoder, root)
     config_utils.validate_cache_args(args)
     qwen_image_utils.resolve_model_version_args(args)
     if args.model_version != "original":
@@ -60,12 +98,20 @@ def main():
     # Load dataset config
     blueprint_generator = BlueprintGenerator(ConfigSanitizer())
     logger.info(f"Load dataset config from {args.dataset_config}")
-    user_config = config_utils.load_user_config(args.dataset_config)
+    user_config = config_utils.load_user_config(args.dataset_config, experiment_root=args.experiment_dir)
     blueprint = blueprint_generator.generate(user_config, args, architecture=ARCHITECTURE_QWEN_IMAGE)
-    train_dataset_group = config_utils.generate_dataset_group_by_blueprint(blueprint.dataset_group)
+    train_dataset_group = config_utils.generate_dataset_group_by_blueprint(
+        blueprint.dataset_group, experiment_root=args.experiment_dir
+    )
 
     config_utils.validate_dataset_sources(train_dataset_group, args.dataset_config)
+    config_utils.validate_role_aware_sources(train_dataset_group, args.dataset_config)
     datasets = train_dataset_group.datasets
+    if args.skip_existing and any(dataset.role is not None for dataset in datasets):
+        raise ValueError(
+            f"{args.dataset_config}: --skip_existing cannot verify validation source bindings; "
+            "rebuild role-bearing caches without this flag"
+        )
 
     # define accelerator for fp8 inference
     vl_dtype = torch.float8_e4m3fn if args.fp8_vl else torch.bfloat16
@@ -87,7 +133,7 @@ def main():
 
     def encode_for_text_encoder(batch: list[ItemInfo]):
         nonlocal tokenizer, text_encoder, device, accelerator, args
-        encode_and_save_batch(tokenizer, text_encoder, batch, device, accelerator)
+        encode_and_save_batch(tokenizer, text_encoder, batch, device, accelerator, [dataset.role for dataset in datasets])
 
     cache_text_encoder_outputs.process_text_encoder_batches(
         args.num_workers,
@@ -107,6 +153,8 @@ def main():
 
 
 def qwen_image_setup_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser.add_argument("--train_config", type=str, default=None, help="train.toml anchor for an experiment directory")
+    parser.add_argument("--experiment_dir", type=str, default=None, help="portable experiment directory")
     parser.add_argument("--text_encoder", type=str, default=None, required=True, help="Text Encoder (Qwen2.5-VL) checkpoint path")
     parser.add_argument("--fp8_vl", action="store_true", help="use fp8 for Text Encoder model")
     qwen_image_utils.add_model_version_args(parser)

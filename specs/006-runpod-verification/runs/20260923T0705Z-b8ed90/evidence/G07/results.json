@@ -1,0 +1,1088 @@
+{
+  "cases": {
+    "g01": {
+      "events": {
+        "all_tags": [
+          "loss/average",
+          "loss/current",
+          "loss/epoch",
+          "lr/unet",
+          "train_eval_loss_high_noise",
+          "train_eval_loss_low_noise",
+          "train_eval_loss_mean",
+          "val_loss_high_noise",
+          "val_loss_low_noise",
+          "val_loss_mean"
+        ],
+        "duplicate_tag_steps": [],
+        "errors": [],
+        "events": [
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 0,
+            "tag": "train_eval_loss_mean",
+            "value": 0.036499254405498505
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 4,
+            "tag": "train_eval_loss_mean",
+            "value": 0.03643141686916351
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 8,
+            "tag": "train_eval_loss_mean",
+            "value": 0.03630698099732399
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 12,
+            "tag": "train_eval_loss_mean",
+            "value": 0.03610692918300629
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 0,
+            "tag": "train_eval_loss_low_noise",
+            "value": 0.03737400472164154
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 4,
+            "tag": "train_eval_loss_low_noise",
+            "value": 0.03734935447573662
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 8,
+            "tag": "train_eval_loss_low_noise",
+            "value": 0.037281762808561325
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 12,
+            "tag": "train_eval_loss_low_noise",
+            "value": 0.03719932585954666
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 0,
+            "tag": "train_eval_loss_high_noise",
+            "value": 0.03562450781464577
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 4,
+            "tag": "train_eval_loss_high_noise",
+            "value": 0.03551347926259041
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 8,
+            "tag": "train_eval_loss_high_noise",
+            "value": 0.035332199186086655
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 12,
+            "tag": "train_eval_loss_high_noise",
+            "value": 0.03501452878117561
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 0,
+            "tag": "val_loss_mean",
+            "value": 0.028796495869755745
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 4,
+            "tag": "val_loss_mean",
+            "value": 0.02875940501689911
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 8,
+            "tag": "val_loss_mean",
+            "value": 0.02866188809275627
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 12,
+            "tag": "val_loss_mean",
+            "value": 0.028546057641506195
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 0,
+            "tag": "val_loss_low_noise",
+            "value": 0.029319506138563156
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 4,
+            "tag": "val_loss_low_noise",
+            "value": 0.029274841770529747
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 8,
+            "tag": "val_loss_low_noise",
+            "value": 0.029223686084151268
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 12,
+            "tag": "val_loss_low_noise",
+            "value": 0.029147552326321602
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 0,
+            "tag": "val_loss_high_noise",
+            "value": 0.028273485600948334
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 4,
+            "tag": "val_loss_high_noise",
+            "value": 0.02824396826326847
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 8,
+            "tag": "val_loss_high_noise",
+            "value": 0.028100090101361275
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0",
+            "step": 12,
+            "tag": "val_loss_high_noise",
+            "value": 0.02794456295669079
+          }
+        ],
+        "files": [
+          "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/tensorboard/20260923072103/network_train/events.out.tfevents.1790148077.0f88a8265813.7333.0"
+        ]
+      },
+      "packages": [
+        {
+          "errors": [],
+          "location": "current",
+          "model_files": [
+            "model.safetensors"
+          ],
+          "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/current_training_states/qwen_image_lora-step-4",
+          "rank_rng_files": [
+            "random_states_0.pkl"
+          ],
+          "sample_pngs": [
+            "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/current_training_states/qwen_image_lora-step-4/samples/qwen_image_lora_000004_00_20260923072207_42_000.png"
+          ],
+          "sidecars": {
+            "experiment_state.json": {
+              "absolute_completed_step": 4,
+              "controls": {
+                "val_every_n_steps": 4,
+                "val_level_noise_n": 4,
+                "val_seed_noise": 42,
+                "val_seed_noise_n": 2
+              },
+              "metrics_at_step": {
+                "train_eval_loss_high_noise": 0.035513479728251696,
+                "train_eval_loss_low_noise": 0.037349356105551124,
+                "train_eval_loss_mean": 0.03643141791690141,
+                "val_loss_high_noise": 0.028243968030437827,
+                "val_loss_low_noise": 0.029274841925750177,
+                "val_loss_mean": 0.028759404978094
+              },
+              "model_version": "original",
+              "output_name": "qwen_image_lora",
+              "sample_count": 1,
+              "save_reasons": [
+                "periodic",
+                "new_best",
+                "sample"
+              ],
+              "validation_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+              "version": "qwen-image-experiment-state-v1"
+            },
+            "val_loss_state.json": {
+              "absolute_completed_step": 4,
+              "controls": {
+                "val_every_n_steps": 4,
+                "val_level_noise_n": 4,
+                "val_seed_noise": 42,
+                "val_seed_noise_n": 2
+              },
+              "model_version": "original",
+              "validation_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+              "version": "qwen-image-val-loss-state-v1"
+            }
+          }
+        },
+        {
+          "errors": [],
+          "location": "current",
+          "model_files": [
+            "model.safetensors"
+          ],
+          "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/current_training_states/qwen_image_lora-step-8",
+          "rank_rng_files": [
+            "random_states_0.pkl"
+          ],
+          "sample_pngs": [
+            "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/current_training_states/qwen_image_lora-step-8/samples/qwen_image_lora_000008_00_20260923072240_42_000.png"
+          ],
+          "sidecars": {
+            "experiment_state.json": {
+              "absolute_completed_step": 8,
+              "controls": {
+                "val_every_n_steps": 4,
+                "val_level_noise_n": 4,
+                "val_seed_noise": 42,
+                "val_seed_noise_n": 2
+              },
+              "metrics_at_step": {
+                "train_eval_loss_high_noise": 0.03533220035023987,
+                "train_eval_loss_low_noise": 0.03728176397271454,
+                "train_eval_loss_mean": 0.03630698216147721,
+                "val_loss_high_noise": 0.028100090644632775,
+                "val_loss_low_noise": 0.029223686860253412,
+                "val_loss_mean": 0.028661888752443094
+              },
+              "model_version": "original",
+              "output_name": "qwen_image_lora",
+              "sample_count": 1,
+              "save_reasons": [
+                "periodic",
+                "new_best",
+                "sample"
+              ],
+              "validation_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+              "version": "qwen-image-experiment-state-v1"
+            },
+            "val_loss_state.json": {
+              "absolute_completed_step": 8,
+              "controls": {
+                "val_every_n_steps": 4,
+                "val_level_noise_n": 4,
+                "val_seed_noise": 42,
+                "val_seed_noise_n": 2
+              },
+              "model_version": "original",
+              "validation_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+              "version": "qwen-image-val-loss-state-v1"
+            }
+          }
+        },
+        {
+          "errors": [],
+          "location": "best",
+          "model_files": [
+            "model.safetensors"
+          ],
+          "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/val_training_states/val-loss/qwen_image_lora-step-12",
+          "rank_rng_files": [
+            "random_states_0.pkl"
+          ],
+          "sample_pngs": [
+            "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/val_training_states/val-loss/qwen_image_lora-step-12/samples/qwen_image_lora_000012_00_20260923072313_42_000.png"
+          ],
+          "sidecars": {
+            "experiment_state.json": {
+              "absolute_completed_step": 12,
+              "controls": {
+                "val_every_n_steps": 4,
+                "val_level_noise_n": 4,
+                "val_seed_noise": 42,
+                "val_seed_noise_n": 2
+              },
+              "metrics_at_step": {
+                "train_eval_loss_high_noise": 0.035014529479667544,
+                "train_eval_loss_low_noise": 0.037199326790869236,
+                "train_eval_loss_mean": 0.03610692813526839,
+                "val_loss_high_noise": 0.027944562801470358,
+                "val_loss_low_noise": 0.029147551705439884,
+                "val_loss_mean": 0.02854605725345512
+              },
+              "model_version": "original",
+              "output_name": "qwen_image_lora",
+              "sample_count": 1,
+              "save_reasons": [
+                "periodic",
+                "final",
+                "new_best",
+                "sample"
+              ],
+              "validation_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+              "version": "qwen-image-experiment-state-v1"
+            },
+            "val_loss_state.json": {
+              "absolute_completed_step": 12,
+              "controls": {
+                "val_every_n_steps": 4,
+                "val_level_noise_n": 4,
+                "val_seed_noise": 42,
+                "val_seed_noise_n": 2
+              },
+              "model_version": "original",
+              "validation_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+              "version": "qwen-image-val-loss-state-v1"
+            }
+          }
+        }
+      ]
+    },
+    "g02": {
+      "events": {
+        "all_tags": [
+          "loss/average",
+          "loss/current",
+          "loss/epoch",
+          "lr/unet",
+          "train_eval_loss_high_noise",
+          "train_eval_loss_low_noise",
+          "train_eval_loss_mean",
+          "val_loss_high_noise",
+          "val_loss_low_noise",
+          "val_loss_mean"
+        ],
+        "duplicate_tag_steps": [],
+        "errors": [],
+        "events": [
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 0,
+            "tag": "train_eval_loss_mean",
+            "value": 0.036499254405498505
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 4,
+            "tag": "train_eval_loss_mean",
+            "value": 0.03645135089755058
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 8,
+            "tag": "train_eval_loss_mean",
+            "value": 0.03633229434490204
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 10,
+            "tag": "train_eval_loss_mean",
+            "value": 0.03627153858542442
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 0,
+            "tag": "train_eval_loss_low_noise",
+            "value": 0.03737400472164154
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 4,
+            "tag": "train_eval_loss_low_noise",
+            "value": 0.03736485540866852
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 8,
+            "tag": "train_eval_loss_low_noise",
+            "value": 0.037296704947948456
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 10,
+            "tag": "train_eval_loss_low_noise",
+            "value": 0.03725838661193848
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 0,
+            "tag": "train_eval_loss_high_noise",
+            "value": 0.03562450781464577
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 4,
+            "tag": "train_eval_loss_high_noise",
+            "value": 0.03553784266114235
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 8,
+            "tag": "train_eval_loss_high_noise",
+            "value": 0.03536788746714592
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 10,
+            "tag": "train_eval_loss_high_noise",
+            "value": 0.03528469055891037
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 0,
+            "tag": "val_loss_mean",
+            "value": 0.028796495869755745
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 4,
+            "tag": "val_loss_mean",
+            "value": 0.028779326006770134
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 8,
+            "tag": "val_loss_mean",
+            "value": 0.028680553659796715
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 10,
+            "tag": "val_loss_mean",
+            "value": 0.0286332368850708
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 0,
+            "tag": "val_loss_low_noise",
+            "value": 0.029319506138563156
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 4,
+            "tag": "val_loss_low_noise",
+            "value": 0.029305100440979004
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 8,
+            "tag": "val_loss_low_noise",
+            "value": 0.029248137027025223
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 10,
+            "tag": "val_loss_low_noise",
+            "value": 0.02921513095498085
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 0,
+            "tag": "val_loss_high_noise",
+            "value": 0.028273485600948334
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 4,
+            "tag": "val_loss_high_noise",
+            "value": 0.028253549709916115
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 8,
+            "tag": "val_loss_high_noise",
+            "value": 0.028112970292568207
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0",
+            "step": 10,
+            "tag": "val_loss_high_noise",
+            "value": 0.02805134281516075
+          }
+        ],
+        "files": [
+          "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/tensorboard/20260923072347/network_train/events.out.tfevents.1790148242.0f88a8265813.10044.0"
+        ]
+      },
+      "packages": [
+        {
+          "errors": [],
+          "location": "current",
+          "model_files": [
+            "model.safetensors"
+          ],
+          "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/current_training_states/qwen_image_lora-step-4",
+          "rank_rng_files": [
+            "random_states_0.pkl"
+          ],
+          "sample_pngs": [
+            "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/current_training_states/qwen_image_lora-step-4/samples/qwen_image_lora_000004_00_20260923072449_42_000.png"
+          ],
+          "sidecars": {
+            "experiment_state.json": {
+              "absolute_completed_step": 4,
+              "controls": {
+                "val_every_n_steps": 4,
+                "val_level_noise_n": 4,
+                "val_seed_noise": 42,
+                "val_seed_noise_n": 2
+              },
+              "metrics_at_step": {
+                "train_eval_loss_high_noise": 0.03553784266114235,
+                "train_eval_loss_low_noise": 0.037364856572821736,
+                "train_eval_loss_mean": 0.03645134961698204,
+                "val_loss_high_noise": 0.028253550330797832,
+                "val_loss_low_noise": 0.029305100130538147,
+                "val_loss_mean": 0.02877932523066799
+              },
+              "model_version": "original",
+              "output_name": "qwen_image_lora",
+              "sample_count": 1,
+              "save_reasons": [
+                "new_best"
+              ],
+              "validation_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+              "version": "qwen-image-experiment-state-v1"
+            },
+            "val_loss_state.json": {
+              "absolute_completed_step": 4,
+              "controls": {
+                "val_every_n_steps": 4,
+                "val_level_noise_n": 4,
+                "val_seed_noise": 42,
+                "val_seed_noise_n": 2
+              },
+              "model_version": "original",
+              "validation_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+              "version": "qwen-image-val-loss-state-v1"
+            }
+          }
+        },
+        {
+          "errors": [],
+          "location": "current",
+          "model_files": [
+            "model.safetensors"
+          ],
+          "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/current_training_states/qwen_image_lora-step-8",
+          "rank_rng_files": [
+            "random_states_0.pkl"
+          ],
+          "sample_pngs": [
+            "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/current_training_states/qwen_image_lora-step-8/samples/qwen_image_lora_000008_00_20260923072519_42_000.png"
+          ],
+          "sidecars": {
+            "experiment_state.json": {
+              "absolute_completed_step": 8,
+              "controls": {
+                "val_every_n_steps": 4,
+                "val_level_noise_n": 4,
+                "val_seed_noise": 42,
+                "val_seed_noise_n": 2
+              },
+              "metrics_at_step": {
+                "train_eval_loss_high_noise": 0.0353678863029927,
+                "train_eval_loss_low_noise": 0.03729670378379524,
+                "train_eval_loss_mean": 0.03633229504339397,
+                "val_loss_high_noise": 0.02811296967168649,
+                "val_loss_low_noise": 0.02924813733746608,
+                "val_loss_mean": 0.028680553504576285
+              },
+              "model_version": "original",
+              "output_name": "qwen_image_lora",
+              "sample_count": 1,
+              "save_reasons": [
+                "periodic",
+                "new_best",
+                "sample"
+              ],
+              "validation_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+              "version": "qwen-image-experiment-state-v1"
+            },
+            "val_loss_state.json": {
+              "absolute_completed_step": 8,
+              "controls": {
+                "val_every_n_steps": 4,
+                "val_level_noise_n": 4,
+                "val_seed_noise": 42,
+                "val_seed_noise_n": 2
+              },
+              "model_version": "original",
+              "validation_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+              "version": "qwen-image-val-loss-state-v1"
+            }
+          }
+        },
+        {
+          "errors": [],
+          "location": "best",
+          "model_files": [
+            "model.safetensors"
+          ],
+          "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/val_training_states/val-loss/qwen_image_lora-step-10",
+          "rank_rng_files": [
+            "random_states_0.pkl"
+          ],
+          "sample_pngs": [
+            "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/val_training_states/val-loss/qwen_image_lora-step-10/samples/qwen_image_lora_000010_00_20260923072546_42_000.png"
+          ],
+          "sidecars": {
+            "experiment_state.json": {
+              "absolute_completed_step": 10,
+              "controls": {
+                "val_every_n_steps": 4,
+                "val_level_noise_n": 4,
+                "val_seed_noise": 42,
+                "val_seed_noise_n": 2
+              },
+              "metrics_at_step": {
+                "train_eval_loss_high_noise": 0.03528469055891037,
+                "train_eval_loss_low_noise": 0.03725838661193848,
+                "train_eval_loss_mean": 0.03627153858542442,
+                "val_loss_high_noise": 0.02805134328082204,
+                "val_loss_low_noise": 0.029215130178878706,
+                "val_loss_mean": 0.02863323672985037
+              },
+              "model_version": "original",
+              "output_name": "qwen_image_lora",
+              "sample_count": 1,
+              "save_reasons": [
+                "final",
+                "new_best"
+              ],
+              "validation_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+              "version": "qwen-image-experiment-state-v1"
+            },
+            "val_loss_state.json": {
+              "absolute_completed_step": 10,
+              "controls": {
+                "val_every_n_steps": 4,
+                "val_level_noise_n": 4,
+                "val_seed_noise": 42,
+                "val_seed_noise_n": 2
+              },
+              "model_version": "original",
+              "validation_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+              "version": "qwen-image-val-loss-state-v1"
+            }
+          }
+        }
+      ]
+    },
+    "g06-best": {
+      "events": {
+        "all_tags": [
+          "loss/average",
+          "loss/current",
+          "loss/epoch",
+          "lr/unet",
+          "train_eval_loss_high_noise",
+          "train_eval_loss_low_noise",
+          "train_eval_loss_mean",
+          "val_loss_high_noise",
+          "val_loss_low_noise",
+          "val_loss_mean"
+        ],
+        "duplicate_tag_steps": [],
+        "errors": [],
+        "events": [
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/tensorboard/20260923072841/network_train/events.out.tfevents.1790148537.0f88a8265813.10404.0",
+            "step": 12,
+            "tag": "train_eval_loss_mean",
+            "value": 0.03610692918300629
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/tensorboard/20260923072841/network_train/events.out.tfevents.1790148537.0f88a8265813.10404.0",
+            "step": 16,
+            "tag": "train_eval_loss_mean",
+            "value": 0.035921644419431686
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/tensorboard/20260923072841/network_train/events.out.tfevents.1790148537.0f88a8265813.10404.0",
+            "step": 12,
+            "tag": "train_eval_loss_low_noise",
+            "value": 0.03719932585954666
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/tensorboard/20260923072841/network_train/events.out.tfevents.1790148537.0f88a8265813.10404.0",
+            "step": 16,
+            "tag": "train_eval_loss_low_noise",
+            "value": 0.03707881644368172
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/tensorboard/20260923072841/network_train/events.out.tfevents.1790148537.0f88a8265813.10404.0",
+            "step": 12,
+            "tag": "train_eval_loss_high_noise",
+            "value": 0.03501452878117561
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/tensorboard/20260923072841/network_train/events.out.tfevents.1790148537.0f88a8265813.10404.0",
+            "step": 16,
+            "tag": "train_eval_loss_high_noise",
+            "value": 0.03476446866989136
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/tensorboard/20260923072841/network_train/events.out.tfevents.1790148537.0f88a8265813.10404.0",
+            "step": 12,
+            "tag": "val_loss_mean",
+            "value": 0.028546057641506195
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/tensorboard/20260923072841/network_train/events.out.tfevents.1790148537.0f88a8265813.10404.0",
+            "step": 16,
+            "tag": "val_loss_mean",
+            "value": 0.028423452749848366
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/tensorboard/20260923072841/network_train/events.out.tfevents.1790148537.0f88a8265813.10404.0",
+            "step": 12,
+            "tag": "val_loss_low_noise",
+            "value": 0.029147552326321602
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/tensorboard/20260923072841/network_train/events.out.tfevents.1790148537.0f88a8265813.10404.0",
+            "step": 16,
+            "tag": "val_loss_low_noise",
+            "value": 0.029039451852440834
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/tensorboard/20260923072841/network_train/events.out.tfevents.1790148537.0f88a8265813.10404.0",
+            "step": 12,
+            "tag": "val_loss_high_noise",
+            "value": 0.02794456295669079
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/tensorboard/20260923072841/network_train/events.out.tfevents.1790148537.0f88a8265813.10404.0",
+            "step": 16,
+            "tag": "val_loss_high_noise",
+            "value": 0.027807453647255898
+          }
+        ],
+        "files": [
+          "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/tensorboard/20260923072841/network_train/events.out.tfevents.1790148537.0f88a8265813.10404.0"
+        ]
+      },
+      "packages": [
+        {
+          "errors": [],
+          "location": "current",
+          "model_files": [
+            "model.safetensors"
+          ],
+          "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/current_training_states/qwen_image_lora-step-12",
+          "rank_rng_files": [
+            "random_states_0.pkl"
+          ],
+          "sample_pngs": [
+            "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/current_training_states/qwen_image_lora-step-12/samples/qwen_image_lora_000012_00_20260923072313_42_000.png"
+          ],
+          "sidecars": {
+            "experiment_state.json": {
+              "absolute_completed_step": 12,
+              "controls": {
+                "val_every_n_steps": 4,
+                "val_level_noise_n": 4,
+                "val_seed_noise": 42,
+                "val_seed_noise_n": 2
+              },
+              "metrics_at_step": {
+                "train_eval_loss_high_noise": 0.035014529479667544,
+                "train_eval_loss_low_noise": 0.037199326790869236,
+                "train_eval_loss_mean": 0.03610692813526839,
+                "val_loss_high_noise": 0.027944562801470358,
+                "val_loss_low_noise": 0.029147551705439884,
+                "val_loss_mean": 0.02854605725345512
+              },
+              "model_version": "original",
+              "output_name": "qwen_image_lora",
+              "sample_count": 1,
+              "save_reasons": [
+                "periodic",
+                "final",
+                "new_best",
+                "sample"
+              ],
+              "validation_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+              "version": "qwen-image-experiment-state-v1"
+            },
+            "val_loss_state.json": {
+              "absolute_completed_step": 12,
+              "controls": {
+                "val_every_n_steps": 4,
+                "val_level_noise_n": 4,
+                "val_seed_noise": 42,
+                "val_seed_noise_n": 2
+              },
+              "model_version": "original",
+              "validation_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+              "version": "qwen-image-val-loss-state-v1"
+            }
+          }
+        },
+        {
+          "errors": [],
+          "location": "best",
+          "model_files": [
+            "model.safetensors"
+          ],
+          "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/val_training_states/val-loss/qwen_image_lora-step-16",
+          "rank_rng_files": [
+            "random_states_0.pkl"
+          ],
+          "sample_pngs": [
+            "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/val_training_states/val-loss/qwen_image_lora-step-16/samples/qwen_image_lora_000016_00_20260923072940_42_000.png"
+          ],
+          "sidecars": {
+            "experiment_state.json": {
+              "absolute_completed_step": 16,
+              "controls": {
+                "val_every_n_steps": 4,
+                "val_level_noise_n": 4,
+                "val_seed_noise": 42,
+                "val_seed_noise_n": 2
+              },
+              "metrics_at_step": {
+                "train_eval_loss_high_noise": 0.03476446936838329,
+                "train_eval_loss_low_noise": 0.03707881737500429,
+                "train_eval_loss_mean": 0.03592164337169379,
+                "val_loss_high_noise": 0.027807452871153753,
+                "val_loss_low_noise": 0.02903945107633869,
+                "val_loss_mean": 0.02842345197374622
+              },
+              "model_version": "original",
+              "output_name": "qwen_image_lora",
+              "sample_count": 1,
+              "save_reasons": [
+                "periodic",
+                "final",
+                "new_best",
+                "sample"
+              ],
+              "validation_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+              "version": "qwen-image-experiment-state-v1"
+            },
+            "val_loss_state.json": {
+              "absolute_completed_step": 16,
+              "controls": {
+                "val_every_n_steps": 4,
+                "val_level_noise_n": 4,
+                "val_seed_noise": 42,
+                "val_seed_noise_n": 2
+              },
+              "model_version": "original",
+              "validation_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+              "version": "qwen-image-val-loss-state-v1"
+            }
+          }
+        }
+      ]
+    },
+    "g06-current": {
+      "events": {
+        "all_tags": [
+          "loss/average",
+          "loss/current",
+          "loss/epoch",
+          "lr/unet",
+          "train_eval_loss_high_noise",
+          "train_eval_loss_low_noise",
+          "train_eval_loss_mean",
+          "val_loss_high_noise",
+          "val_loss_low_noise",
+          "val_loss_mean"
+        ],
+        "duplicate_tag_steps": [],
+        "errors": [],
+        "events": [
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/tensorboard/20260923072700/network_train/events.out.tfevents.1790148437.0f88a8265813.10234.0",
+            "step": 8,
+            "tag": "train_eval_loss_mean",
+            "value": 0.03630698099732399
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/tensorboard/20260923072700/network_train/events.out.tfevents.1790148437.0f88a8265813.10234.0",
+            "step": 12,
+            "tag": "train_eval_loss_mean",
+            "value": 0.036125071346759796
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/tensorboard/20260923072700/network_train/events.out.tfevents.1790148437.0f88a8265813.10234.0",
+            "step": 8,
+            "tag": "train_eval_loss_low_noise",
+            "value": 0.037281762808561325
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/tensorboard/20260923072700/network_train/events.out.tfevents.1790148437.0f88a8265813.10234.0",
+            "step": 12,
+            "tag": "train_eval_loss_low_noise",
+            "value": 0.037195250391960144
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/tensorboard/20260923072700/network_train/events.out.tfevents.1790148437.0f88a8265813.10234.0",
+            "step": 8,
+            "tag": "train_eval_loss_high_noise",
+            "value": 0.035332199186086655
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/tensorboard/20260923072700/network_train/events.out.tfevents.1790148437.0f88a8265813.10234.0",
+            "step": 12,
+            "tag": "train_eval_loss_high_noise",
+            "value": 0.03505489230155945
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/tensorboard/20260923072700/network_train/events.out.tfevents.1790148437.0f88a8265813.10234.0",
+            "step": 8,
+            "tag": "val_loss_mean",
+            "value": 0.02866188809275627
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/tensorboard/20260923072700/network_train/events.out.tfevents.1790148437.0f88a8265813.10234.0",
+            "step": 12,
+            "tag": "val_loss_mean",
+            "value": 0.028544273227453232
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/tensorboard/20260923072700/network_train/events.out.tfevents.1790148437.0f88a8265813.10234.0",
+            "step": 8,
+            "tag": "val_loss_low_noise",
+            "value": 0.029223686084151268
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/tensorboard/20260923072700/network_train/events.out.tfevents.1790148437.0f88a8265813.10234.0",
+            "step": 12,
+            "tag": "val_loss_low_noise",
+            "value": 0.0291416198015213
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/tensorboard/20260923072700/network_train/events.out.tfevents.1790148437.0f88a8265813.10234.0",
+            "step": 8,
+            "tag": "val_loss_high_noise",
+            "value": 0.028100090101361275
+          },
+          {
+            "file": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/tensorboard/20260923072700/network_train/events.out.tfevents.1790148437.0f88a8265813.10234.0",
+            "step": 12,
+            "tag": "val_loss_high_noise",
+            "value": 0.027946924790740013
+          }
+        ],
+        "files": [
+          "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/tensorboard/20260923072700/network_train/events.out.tfevents.1790148437.0f88a8265813.10234.0"
+        ]
+      },
+      "packages": [
+        {
+          "errors": [],
+          "location": "current",
+          "model_files": [
+            "model.safetensors"
+          ],
+          "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/current_training_states/qwen_image_lora-step-8",
+          "rank_rng_files": [
+            "random_states_0.pkl"
+          ],
+          "sample_pngs": [
+            "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/current_training_states/qwen_image_lora-step-8/samples/qwen_image_lora_000008_00_20260923072240_42_000.png"
+          ],
+          "sidecars": {
+            "experiment_state.json": {
+              "absolute_completed_step": 8,
+              "controls": {
+                "val_every_n_steps": 4,
+                "val_level_noise_n": 4,
+                "val_seed_noise": 42,
+                "val_seed_noise_n": 2
+              },
+              "metrics_at_step": {
+                "train_eval_loss_high_noise": 0.03533220035023987,
+                "train_eval_loss_low_noise": 0.03728176397271454,
+                "train_eval_loss_mean": 0.03630698216147721,
+                "val_loss_high_noise": 0.028100090644632775,
+                "val_loss_low_noise": 0.029223686860253412,
+                "val_loss_mean": 0.028661888752443094
+              },
+              "model_version": "original",
+              "output_name": "qwen_image_lora",
+              "sample_count": 1,
+              "save_reasons": [
+                "periodic",
+                "new_best",
+                "sample"
+              ],
+              "validation_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+              "version": "qwen-image-experiment-state-v1"
+            },
+            "val_loss_state.json": {
+              "absolute_completed_step": 8,
+              "controls": {
+                "val_every_n_steps": 4,
+                "val_level_noise_n": 4,
+                "val_seed_noise": 42,
+                "val_seed_noise_n": 2
+              },
+              "model_version": "original",
+              "validation_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+              "version": "qwen-image-val-loss-state-v1"
+            }
+          }
+        },
+        {
+          "errors": [],
+          "location": "best",
+          "model_files": [
+            "model.safetensors"
+          ],
+          "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/val_training_states/val-loss/qwen_image_lora-step-12",
+          "rank_rng_files": [
+            "random_states_0.pkl"
+          ],
+          "sample_pngs": [
+            "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/val_training_states/val-loss/qwen_image_lora-step-12/samples/qwen_image_lora_000012_00_20260923072313_42_000.png"
+          ],
+          "sidecars": {
+            "experiment_state.json": {
+              "absolute_completed_step": 12,
+              "controls": {
+                "val_every_n_steps": 4,
+                "val_level_noise_n": 4,
+                "val_seed_noise": 42,
+                "val_seed_noise_n": 2
+              },
+              "metrics_at_step": {
+                "train_eval_loss_high_noise": 0.035014529479667544,
+                "train_eval_loss_low_noise": 0.037199326790869236,
+                "train_eval_loss_mean": 0.03610692813526839,
+                "val_loss_high_noise": 0.027944562801470358,
+                "val_loss_low_noise": 0.029147551705439884,
+                "val_loss_mean": 0.02854605725345512
+              },
+              "model_version": "original",
+              "output_name": "qwen_image_lora",
+              "sample_count": 1,
+              "save_reasons": [
+                "periodic",
+                "final",
+                "new_best",
+                "sample"
+              ],
+              "validation_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+              "version": "qwen-image-experiment-state-v1"
+            },
+            "val_loss_state.json": {
+              "absolute_completed_step": 12,
+              "controls": {
+                "val_every_n_steps": 4,
+                "val_level_noise_n": 4,
+                "val_seed_noise": 42,
+                "val_seed_noise_n": 2
+              },
+              "model_version": "original",
+              "validation_fingerprint": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+              "version": "qwen-image-val-loss-state-v1"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "note": "Inventory only; compare attribution, retention and immutable G06 inputs with the protocol before assigning PASS."
+}

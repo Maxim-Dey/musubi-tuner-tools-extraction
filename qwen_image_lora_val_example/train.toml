@@ -1,0 +1,56 @@
+# Replace these three absolute paths with files on the training server.
+# Use the original BF16 Qwen-Image DiT, not a preconverted FP8 checkpoint.
+dit = "/REPLACE/WITH/SERVER/qwen_image_original_bf16_dit.safetensors"
+vae = "/REPLACE/WITH/SERVER/qwen_image_vae.safetensors"
+text_encoder = "/REPLACE/WITH/SERVER/qwen_2_5_vl_text_encoder.safetensors"
+
+model_version = "original"
+experiment_dir = "."
+dataset_config = "train-dataset.toml"
+val_dataset_config = "val-dataset.toml"
+network_module = "networks.lora_qwen_image"
+network_dim = 16
+network_alpha = 16
+
+mixed_precision = "bf16"
+fp8_base = false
+fp8_scaled = false
+fp8_vl = false
+blocks_to_swap = 0
+sdpa = true
+gradient_checkpointing = true
+
+max_train_steps = 1600
+gradient_accumulation_steps = 1
+seed = 42
+optimizer_type = "adamw8bit"
+learning_rate = 5e-5
+lr_scheduler = "constant_with_warmup"
+lr_warmup_steps = 200
+max_grad_norm = 1.0
+
+# The shift controls training timesteps; fixed validation levels do not use it.
+timestep_sampling = "shift"
+discrete_flow_shift = 2.2
+weighting_scheme = "none"
+max_data_loader_n_workers = 0
+persistent_data_loader_workers = false
+
+val_every_n_steps = 200
+val_seed_noise = 42
+val_level_noise_n = 10
+val_seed_noise_n = 1
+
+output_dir = "output"
+output_name = "qwen_image_lora"
+# The single resumable adapter must remain FP32. BF16 would round its only copy.
+save_precision = "fp32"
+save_every_n_steps = 200
+save_last_n_steps = 1000
+save_state = true
+log_with = "tensorboard"
+logging_dir = "output/tensorboard"
+
+sample_prompts = "sample_prompts.txt"
+sample_every_n_steps = 200
+sample_at_first = false

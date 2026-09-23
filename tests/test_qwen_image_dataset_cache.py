@@ -1,7 +1,9 @@
 """Image declarations, actual cache IO and batching; no model weights required."""
 
 import argparse
+import hashlib
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -41,6 +43,182 @@ def dataset(path, **overrides):
         architecture="qi",
         **overrides,
     )
+
+
+def role_declaration(tmp_path):
+    familiar = image_source(tmp_path / "familiar")
+    unfamiliar = image_source(tmp_path / "unfamiliar")
+    declaration = {
+        "general": {"resolution": 64, "caption_extension": ".txt", "batch_size": 1, "num_repeats": 1},
+        "datasets": [
+            {"role": "val_familiar", "image_directory": str(familiar), "cache_directory": str(tmp_path / "familiar_cache")},
+            {"role": "val_unfamiliar", "image_directory": str(unfamiliar), "cache_directory": str(tmp_path / "unfamiliar_cache")},
+        ],
+    }
+    return declaration, familiar, unfamiliar
+
+
+def run_cache_preflight(tmp_path, monkeypatch, declaration, module, extra_args=()):
+    config = tmp_path / "val-dataset.toml"
+    config.write_text(toml.dumps(declaration), encoding="utf-8")
+    weight = tmp_path / "unused.safetensors"
+    weight.touch()
+    model_loader = "load_vae" if module is qwen_image_cache_latents else "load_qwen2_5_vl"
+    weight_option = "--vae" if module is qwen_image_cache_latents else "--text_encoder"
+    reached = []
+
+    def stop_at_model(*args, **kwargs):
+        reached.append(True)
+        raise RuntimeError("model boundary")
+
+    monkeypatch.setattr(module.qwen_image_utils, model_loader, stop_at_model)
+    monkeypatch.setattr(sys, "argv", ["fixture", "--dataset_config", str(config), weight_option, str(weight), *extra_args])
+    return config, reached
+
+
+@pytest.mark.parametrize("module", [qwen_image_cache_latents, qwen_image_cache_text_encoder_outputs])
+def test_role_dataset_reaches_cache_model_only_after_preflight(tmp_path, monkeypatch, module):
+    declaration, _, _ = role_declaration(tmp_path)
+    _, reached = run_cache_preflight(tmp_path, monkeypatch, declaration, module)
+    with pytest.raises(RuntimeError, match="model boundary"):
+        module.main()
+    assert reached == [True]
+
+
+@pytest.mark.parametrize("module", [qwen_image_cache_latents, qwen_image_cache_text_encoder_outputs])
+def test_role_cache_skip_existing_rejected_before_model(tmp_path, monkeypatch, module):
+    declaration, _, _ = role_declaration(tmp_path)
+    config, reached = run_cache_preflight(tmp_path, monkeypatch, declaration, module, ["--skip_existing"])
+    with pytest.raises(ValueError, match="skip_existing") as error:
+        module.main()
+    assert str(config) in str(error.value)
+    assert reached == []
+
+
+@pytest.mark.parametrize("module", [qwen_image_cache_latents, qwen_image_cache_text_encoder_outputs])
+@pytest.mark.parametrize("failure", ["missing_caption", "empty_role", "cache_collision"])
+def test_role_source_errors_precede_cache_models(tmp_path, monkeypatch, module, failure):
+    declaration, familiar, unfamiliar = role_declaration(tmp_path)
+    if failure == "missing_caption":
+        Image.new("RGB", (64, 64)).save(familiar / "orphan.png")
+    elif failure == "empty_role":
+        for path in unfamiliar.glob("*.png"):
+            path.unlink()
+    elif failure == "cache_collision":
+        Image.new("RGB", (64, 64), (1, 2, 3)).save(familiar / "a.jpg")
+    config, reached = run_cache_preflight(tmp_path, monkeypatch, declaration, module)
+    with pytest.raises(ValueError) as error:
+        module.main()
+    assert str(config) in str(error.value)
+    assert reached == []
+
+
+@pytest.mark.parametrize("module", [qwen_image_cache_latents, qwen_image_cache_text_encoder_outputs])
+@pytest.mark.parametrize("difference", ["none", "bucket", "preprocessing"])
+def test_shared_source_latent_cache_requires_matching_preprocessing(tmp_path, monkeypatch, module, difference):
+    declaration, familiar, _ = role_declaration(tmp_path)
+    shared_cache = tmp_path / "shared_cache"
+    declaration["datasets"][0]["cache_directory"] = str(shared_cache)
+    declaration["datasets"][1]["image_directory"] = str(familiar)
+    # Distinct spellings reach the same files and pass the existing string-only cache-dir check.
+    declaration["datasets"][1]["cache_directory"] = str(shared_cache) + "/."
+    if difference == "bucket":
+        declaration["datasets"][1]["resolution"] = 128
+    elif difference == "preprocessing":
+        declaration["datasets"][1]["enable_bucket"] = True
+    config, reached = run_cache_preflight(tmp_path, monkeypatch, declaration, module)
+    if difference == "none":
+        with pytest.raises(RuntimeError, match="model boundary"):
+            module.main()
+        assert reached == [True]
+    else:
+        with pytest.raises(ValueError, match="latent cache.*preprocessing") as error:
+            module.main()
+        assert str(config) in str(error.value)
+        assert reached == []
+
+
+@pytest.mark.parametrize("roles", [["val_familiar"], ["val_familiar", "val_familiar"], ["val_familiar", "wrong"]])
+def test_role_declaration_requires_both_known_roles(tmp_path, roles):
+    declaration, _, _ = role_declaration(tmp_path)
+    declaration["datasets"] = declaration["datasets"][: len(roles)]
+    for entry, role in zip(declaration["datasets"], roles):
+        entry["role"] = role
+    with pytest.raises(ValueError, match="role"):
+        config_utils.BlueprintGenerator(config_utils.ConfigSanitizer()).generate(
+            declaration, argparse.Namespace(dataset_config="val-dataset.toml"), architecture="qi"
+        )
+
+
+@pytest.mark.parametrize("key,value", [("batch_size", 2), ("num_repeats", 2)])
+def test_role_declaration_rejects_effective_training_batch_or_repeats(tmp_path, key, value):
+    declaration, _, _ = role_declaration(tmp_path)
+    declaration["general"][key] = value
+    with pytest.raises(ValueError, match=key):
+        config_utils.BlueprintGenerator(config_utils.ConfigSanitizer()).generate(
+            declaration, argparse.Namespace(dataset_config="val-dataset.toml"), architecture="qi"
+        )
+
+
+def test_role_jsonl_keeps_exact_duplicates_but_rejects_conflicting_caption(tmp_path):
+    declaration, familiar, _ = role_declaration(tmp_path)
+    image_path = familiar / "a.png"
+    jsonl = tmp_path / "familiar.jsonl"
+    records = [{"image_path": str(image_path), "caption": "caption a"}] * 2
+    jsonl.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+    declaration["datasets"][0].pop("image_directory")
+    declaration["datasets"][0]["image_jsonl_file"] = str(jsonl)
+
+    def preflight():
+        blueprint = config_utils.BlueprintGenerator(config_utils.ConfigSanitizer()).generate(
+            declaration, argparse.Namespace(dataset_config=str(tmp_path / "val-dataset.toml")), architecture="qi"
+        )
+        group = config_utils.generate_dataset_group_by_blueprint(blueprint.dataset_group, seed=0)
+        config_utils.validate_role_aware_sources(group, str(tmp_path / "val-dataset.toml"))
+        return group
+
+    group = preflight()
+    assert len(group.datasets[0].datasource) == 2
+    records[1] = {**records[1], "caption": "another caption"}
+    jsonl.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+    with pytest.raises(ValueError, match="cache"):
+        preflight()
+
+
+def test_role_cache_writers_bind_source_and_replace_text_metadata(tmp_path, monkeypatch):
+    source = image_source(tmp_path / "images")
+    ds = dataset(source, role="val_familiar")
+    ds.dataset_index = 0
+    image_item = next(ds.retrieve_latent_cache_batches(1))[1][0]
+    expected_sha = hashlib.sha256(Path(image_item.item_key).read_bytes()).hexdigest()
+
+    class EncoderBoundary:
+        device = torch.device("cpu")
+        dtype = torch.float32
+
+        def encode_pixels_to_latents(self, pixels):
+            return pixels[:, :2, :, ::8, ::8]
+
+    qwen_image_cache_latents.encode_and_save_batch(EncoderBoundary(), [image_item], ["val_familiar"])
+    with safe_open(image_item.latent_cache_path, framework="pt") as saved:
+        assert saved.metadata()["source_image_sha256"] == expected_sha
+        assert set(saved.keys()) == {"latents_1x8x8_float32"}
+
+    text_item = next(ds.retrieve_text_encoder_output_cache_batches(1))[0]
+    save_text_encoder_output_cache_qwen_image(text_item, torch.ones(2, 4), source_image_sha256="0" * 64)
+
+    def encoder_boundary(tokenizer, encoder, prompts):
+        return torch.ones(1, 3, 4), torch.tensor([[1, 1, 0]])
+
+    monkeypatch.setattr(qwen_image_cache_text_encoder_outputs.qwen_image_utils, "get_qwen_prompt_embeds", encoder_boundary)
+    qwen_image_cache_text_encoder_outputs.encode_and_save_batch(
+        None, None, [text_item], torch.device("cpu"), None, ["val_familiar"]
+    )
+    with safe_open(text_item.text_encoder_output_cache_path, framework="pt") as saved:
+        assert saved.metadata()["source_image_sha256"] == expected_sha
+        assert saved.metadata()["caption1"] == text_item.caption
+        assert set(saved.keys()) == {"varlen_vl_embed_float32"}
+        assert saved.get_tensor("varlen_vl_embed_float32").shape == (2, 4)
 
 
 @pytest.mark.parametrize("extension", ["toml", "json"])

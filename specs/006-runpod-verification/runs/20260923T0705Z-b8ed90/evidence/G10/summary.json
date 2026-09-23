@@ -1,0 +1,97 @@
+{
+  "cases": {
+    "G01": {
+      "files": {
+        "command.txt": "env HF_HUB_ENABLE_HF_TRANSFER=0 HF_HUB_OFFLINE=1 HF_HOME=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/hf-cache PYTHONPATH=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/src /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/.venv/bin/accelerate launch --mixed_precision bf16 /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/qwen_image_train_network.py --config_file /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/train.toml",
+        "end.txt": "2026-09-23T07:23:21Z",
+        "exit.txt": "0",
+        "pid.txt": "7247",
+        "start.txt": "2026-09-23T07:20:55Z"
+      },
+      "folder": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G01"
+    },
+    "G02": {
+      "files": {
+        "command.txt": "env HF_HUB_ENABLE_HF_TRANSFER=0 HF_HUB_OFFLINE=1 HF_HOME=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/hf-cache PYTHONPATH=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/src /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/.venv/bin/accelerate launch --mixed_precision bf16 /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/qwen_image_train_network.py --config_file /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/train.toml",
+        "end.txt": "2026-09-23T07:25:54Z",
+        "exit.txt": "0",
+        "pid.txt": "9970",
+        "start.txt": "2026-09-23T07:23:39Z"
+      },
+      "folder": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G02"
+    },
+    "G03": {
+      "files": {
+        "command.txt": "env HF_HUB_ENABLE_HF_TRANSFER=0 HF_HUB_OFFLINE=1 HF_HOME=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/hf-cache PYTHONPATH=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/src /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/.venv/bin/python /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/scripts/real_probe.py g03 --checkpoint /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/selected-checkpoint.txt --config /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g03-4x2/train.toml --renamed-config /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g03-renamed/train.toml --ten-by-one-config /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g03-10x1/train.toml",
+        "end.txt": "2026-09-23T07:34:10Z",
+        "exit.txt": "0",
+        "pid.txt": "10501",
+        "start.txt": "2026-09-23T07:29:59Z"
+      },
+      "folder": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G03"
+    },
+    "G04": {
+      "files": {
+        "command.txt": "env HF_HUB_ENABLE_HF_TRANSFER=0 HF_HUB_OFFLINE=1 HF_HOME=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/hf-cache PYTHONPATH=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/src /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/.venv/bin/python /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/scripts/real_probe.py g04 --checkpoint /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/selected-checkpoint.txt --config /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g04/train.toml --out /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G04/forwards.jsonl",
+        "end.txt": "2026-09-23T07:35:17Z",
+        "exit.txt": "0",
+        "pid.txt": "12209",
+        "start.txt": "2026-09-23T07:34:23Z"
+      },
+      "folder": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G04"
+    },
+    "G05": {
+      "files": {
+        "command.txt": "env HF_HUB_ENABLE_HF_TRANSFER=0 HF_HUB_OFFLINE=1 HF_HOME=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/hf-cache PYTHONPATH=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/src /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/.venv/bin/python /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/scripts/real_probe.py g05 --snapshot-config /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g05-snapshot/train.toml --enabled /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g05-on/train.toml --disabled /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g05-off/train.toml --initial-adapter /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/selected-adapter.txt",
+        "end.txt": "2026-09-23T07:40:03Z",
+        "exit.txt": "1",
+        "pid.txt": "12883",
+        "start.txt": "2026-09-23T07:36:16Z"
+      },
+      "folder": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G05"
+    },
+    "G06-best": {
+      "files": {
+        "command.txt": "env HF_HUB_ENABLE_HF_TRANSFER=0 HF_HUB_OFFLINE=1 HF_HOME=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/hf-cache PYTHONPATH=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/src /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/.venv/bin/accelerate launch --mixed_precision bf16 /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/qwen_image_train_network.py --config_file /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/train.toml --resume /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/val_training_states/val-loss/qwen_image_lora-step-12",
+        "end.txt": "2026-09-23T07:29:46Z",
+        "exit.txt": "0",
+        "pid.txt": "10333",
+        "start.txt": "2026-09-23T07:28:34Z"
+      },
+      "folder": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G06-best"
+    },
+    "G06-current": {
+      "files": {
+        "command.txt": "env HF_HUB_ENABLE_HF_TRANSFER=0 HF_HUB_OFFLINE=1 HF_HOME=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/hf-cache PYTHONPATH=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/src /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/.venv/bin/accelerate launch --mixed_precision bf16 /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/qwen_image_train_network.py --config_file /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/train.toml --resume /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/current_training_states/qwen_image_lora-step-8",
+        "end.txt": "2026-09-23T07:27:58Z",
+        "exit.txt": "1",
+        "pid.txt": "10163",
+        "start.txt": "2026-09-23T07:26:53Z"
+      },
+      "folder": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G06-current"
+    },
+    "G07": {
+      "files": {
+        "end.txt": "2026-09-23T07:36:31Z",
+        "exit.txt": "0",
+        "start.txt": "2026-09-23T07:36:30Z"
+      },
+      "folder": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G07"
+    },
+    "G08": {
+      "files": {
+        "command.txt": "env PYTHONPATH=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/src /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/.venv/bin/python -B -m pytest -q --tb=short --junitxml=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G08/junit.xml /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/tests/test_qwen_image_experiment_states.py /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/tests/test_qwen_image_experiment_paths.py /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/tests/test_qwen_image_validation_inputs.py /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/tests/test_qwen_image_validation_training.py /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/tests/test_qwen_image_val_example.py /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/tests/test_qwen_image_dataset_cache.py",
+        "end.txt": "2026-09-23T07:22:27Z",
+        "exit.txt": "0",
+        "pid.txt": "7506",
+        "start.txt": "2026-09-23T07:21:39Z"
+      },
+      "folder": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G08"
+    },
+    "G09": {
+      "files": {},
+      "folder": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G09"
+    }
+  },
+  "note": "Command/exit inventory only; measured PASS/FAIL/NOT RUN and numeric differences require manual G10 reconciliation."
+}

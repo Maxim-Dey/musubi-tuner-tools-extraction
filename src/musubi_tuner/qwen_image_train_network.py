@@ -6,6 +6,9 @@ import importlib.util
 import inspect
 import math
 import os
+import random
+import sys
+from contextlib import contextmanager
 from pathlib import Path
 import re
 from typing import Optional
@@ -26,9 +29,34 @@ from musubi_tuner.training.trainer_base import DiTOutput, NetworkTrainer
 from musubi_tuner.training.sampling_prompts import load_prompts
 from musubi_tuner.training.accelerator_setup import clean_memory_on_device
 from musubi_tuner.training.parser_common import setup_parser_common, read_config_from_file
+from musubi_tuner.training.experiment_paths import rebase_path, resolve_experiment_root
 from musubi_tuner.utils import model_utils
 
 import logging
+
+
+@contextmanager
+def _validation_state(transformer, network):
+    """Temporarily evaluate without changing the following training update."""
+    modules = {id(module): module for root in (transformer, network) for module in root.modules()}
+    modes = {key: module.training for key, module in modules.items()}
+    python_rng = random.getstate()
+    numpy_rng = np.random.get_state()
+    cpu_rng = torch.get_rng_state()
+    cuda_rng = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+    try:
+        transformer.eval()
+        network.eval()
+        with torch.no_grad():
+            yield
+    finally:
+        for key, module in modules.items():
+            module.training = modes[key]
+        random.setstate(python_rng)
+        np.random.set_state(numpy_rng)
+        torch.set_rng_state(cpu_rng)
+        if cuda_rng is not None:
+            torch.cuda.set_rng_state_all(cuda_rng)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -39,7 +67,13 @@ class QwenImageNetworkTrainer(NetworkTrainer):
         super().__init__()
 
     def validate_training_inputs(self, args):
+        if getattr(args, "experiment_dir", None) is not None:
+            _prepare_experiment_training_inputs(args)
         validate_training_args(args)
+        if getattr(args, "_experiment_root", None):
+            from musubi_tuner.training.validation_inputs import prepare_validation_inputs
+
+            self.validation_manifest = prepare_validation_inputs(args)
 
     def validate_training_dataset(self, args, dataset):
         source = getattr(args, "_config_source", "CLI")
@@ -52,6 +86,10 @@ class QwenImageNetworkTrainer(NetworkTrainer):
         if args.max_train_epochs is not None:
             steps = args.max_train_epochs * math.ceil(len(dataset) / processes / args.gradient_accumulation_steps)
         validate_scheduler_args(args, steps * processes)
+        if getattr(args, "val_dataset_config", None) and getattr(self, "validation_manifest", None) is None:
+            from musubi_tuner.training.validation_inputs import prepare_validation_inputs
+
+            self.validation_manifest = prepare_validation_inputs(args)
 
     # region model specific
 
@@ -304,7 +342,7 @@ class QwenImageNetworkTrainer(NetworkTrainer):
         # print(f"vl_embed shape: {vl_embed.shape}, vl_mask shape: {vl_mask.shape if vl_mask is not None else None}")
 
         # ensure the hidden state will require grad
-        if args.gradient_checkpointing:
+        if args.gradient_checkpointing and torch.is_grad_enabled():
             noisy_model_input.requires_grad_(True)
             vl_embed.requires_grad_(True)
 
@@ -349,7 +387,203 @@ class QwenImageNetworkTrainer(NetworkTrainer):
         # print(model_pred.dtype, target.dtype)
         return DiTOutput(pred=model_pred, target=target)
 
+    def evaluate_validation_event(
+        self,
+        args,
+        accelerator,
+        transformer,
+        network,
+        noise_scheduler,
+        dit_dtype,
+        network_dtype,
+        absolute_step,
+    ) -> dict[str, float]:
+        """Evaluate the frozen Qwen validation sets and publish one complete event."""
+        from musubi_tuner.training.validation_inputs import make_validation_loader, read_validation_cache_pair, iter_noise_checks
+
+        manifest = getattr(self, "validation_manifest", None)
+        if manifest is None:
+            raise ValueError("val_dataset_config: validation input is not prepared; provide and preflight both roles")
+
+        def finite_mean(values: list[float], expected: int, label: str) -> float:
+            if len(values) != expected:
+                raise ValueError(f"{label}: expected {expected} validation losses, got {len(values)}; check the fixed input")
+            try:
+                result = math.fsum(values) / expected
+            except OverflowError as error:
+                raise ValueError(f"{label}: nonfinite aggregate loss (overflow); correct the validation input") from error
+            if not math.isfinite(result):
+                raise ValueError(f"{label}: nonfinite aggregate loss; correct the validation input")
+            return result
+
+        image_means = {role: {"all": [], "low": [], "high": []} for role in ("val_familiar", "val_unfamiliar")}
+        checks_per_image = args.val_level_noise_n * args.val_seed_noise_n
+        checks_per_half = checks_per_image // 2
+        with _validation_state(transformer, network):
+            for item in make_validation_loader(manifest):
+                latent, vl_embed = read_validation_cache_pair(item)
+                latent = latent.to(device=accelerator.device)
+                vl_embed = vl_embed.to(device=accelerator.device)
+                batch_latents = latent.unsqueeze(0)
+                batch = {"latents": batch_latents, "vl_embed": [vl_embed]}
+                losses = {"all": [], "low": [], "high": []}
+                for check in iter_noise_checks(
+                    item,
+                    latent,
+                    val_seed_noise=args.val_seed_noise,
+                    val_level_noise_n=args.val_level_noise_n,
+                    val_seed_noise_n=args.val_seed_noise_n,
+                ):
+                    timestep = torch.tensor([check.timestep], device=accelerator.device, dtype=torch.float32)
+                    output = self.call_dit(
+                        args,
+                        accelerator,
+                        transformer,
+                        batch_latents,
+                        batch,
+                        check.epsilon.unsqueeze(0),
+                        check.noisy_latent.unsqueeze(0),
+                        timestep,
+                        network_dtype,
+                    )
+                    loss, _ = self.compute_loss(
+                        args,
+                        output,
+                        timestep,
+                        noise_scheduler,
+                        dit_dtype,
+                        network_dtype,
+                        absolute_step,
+                        exact_sigma=check.t,
+                    )
+                    value = float(loss.detach().item())
+                    if not math.isfinite(value):
+                        raise ValueError(
+                            f"{item.role}: {item.image_path} check i={check.i} j={check.j}: "
+                            "nonfinite validation loss; correct the source/cache or model state"
+                        )
+                    losses["all"].append(value)
+                    losses["low" if check.t < 0.5 else "high"].append(value)
+                label = f"{item.role}: {item.image_path}"
+                image_means[item.role]["all"].append(finite_mean(losses["all"], checks_per_image, label))
+                image_means[item.role]["low"].append(finite_mean(losses["low"], checks_per_half, label + " low-noise"))
+                image_means[item.role]["high"].append(finite_mean(losses["high"], checks_per_half, label + " high-noise"))
+                del latent, vl_embed, batch_latents, batch, check, output, loss
+
+        payload = {}
+        for role, prefix in (("val_familiar", "train_eval_loss"), ("val_unfamiliar", "val_loss")):
+            expected = len(manifest.items_by_role[role])
+            if expected < 1:
+                raise ValueError(f"val_dataset_config: {role} is empty; add a captioned validation item")
+            payload[prefix + "_mean"] = finite_mean(image_means[role]["all"], expected, role)
+            payload[prefix + "_low_noise"] = finite_mean(image_means[role]["low"], expected, role + " low-noise")
+            payload[prefix + "_high_noise"] = finite_mean(image_means[role]["high"], expected, role + " high-noise")
+        accelerator.log(payload, step=absolute_step)
+        return payload
+
     # endregion model specific
+
+
+def _prepare_experiment_training_inputs(args) -> None:
+    """Resolve the optional experiment hierarchy before any model is loaded."""
+    source = getattr(args, "_config_source", "CLI")
+    selected = getattr(args, "_selected_train_config_path", None)
+    if not selected:
+        raise ValueError(
+            f"{source}: experiment_dir requires --config_file <root>/train.toml; "
+            "select that file before training"
+        )
+    root = resolve_experiment_root(args.experiment_dir, selected)
+    selected_path = Path(selected).resolve()
+    required_train_config = root / "train.toml"
+    if selected_path != required_train_config:
+        raise ValueError(
+            f"{source}: selected --config_file {selected_path} does not match experiment_dir {root}; "
+            f"select {required_train_config}"
+        )
+    if getattr(args, "network_module", None) not in (
+        "networks.lora_qwen_image", "musubi_tuner.networks.lora_qwen_image",
+    ):
+        raise ValueError(
+            f"{_setting_source(args, 'network_module')}: network_module={args.network_module!r}: "
+            "experiment_dir requires networks.lora_qwen_image"
+        )
+
+    def fail(key, value, correction):
+        selected_source = _setting_source(args, key)
+        raise ValueError(f"{selected_source}: {key}={value!r} conflicts with experiment_dir={root}; {correction}")
+
+    if not getattr(args, "dataset_config", None):
+        fail("dataset_config", getattr(args, "dataset_config", None), "set dataset_config to the train dataset TOML")
+    if not getattr(args, "val_dataset_config", None):
+        fail("val_dataset_config", getattr(args, "val_dataset_config", None), "set val_dataset_config to the two-role val TOML")
+
+    for key in (
+        "dataset_config", "val_dataset_config", "sample_prompts", "dit", "vae", "text_encoder",
+        "network_weights", "log_tracker_config",
+    ):
+        value = getattr(args, key, None)
+        if value is not None:
+            setattr(args, key, rebase_path(value, root))
+    if getattr(args, "base_weights", None):
+        args.base_weights = [rebase_path(value, root) for value in args.base_weights]
+    if getattr(args, "resume", None) and not getattr(args, "resume_from_huggingface", False):
+        args.resume = rebase_path(args.resume, root)
+
+    for key in ("dataset_config", "val_dataset_config"):
+        value = Path(getattr(args, key))
+        required = root / ("train-dataset.toml" if key == "dataset_config" else "val-dataset.toml")
+        if value != required:
+            fail(key, str(value), f"select {required}")
+        if not value.is_file():
+            fail(key, str(value), f"provide the existing {key} TOML in the experiment folder")
+
+    expected_output = (root / "output").resolve()
+    expected_logging = (expected_output / "tensorboard").resolve()
+    for key, expected in (("output_dir", expected_output), ("logging_dir", expected_logging)):
+        value = getattr(args, key, None)
+        if value is not None and Path(rebase_path(value, root)) != expected:
+            fail(key, value, f"set {key} to {expected} or omit it")
+        setattr(args, key, str(expected))
+
+    name = getattr(args, "output_name", None)
+    invalid_name = (
+        not isinstance(name, str) or not name or name in (".", "..")
+        or any(char in name for char in '/\\<>:"|?*')
+        or name.endswith((".", " "))
+        or re.fullmatch(r"(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?", name) is not None
+    )
+    if invalid_name:
+        fail("output_name", name, "use one safe file basename for output_name")
+    if getattr(args, "save_precision", None) not in (None, "float", "fp32"):
+        fail("save_precision", args.save_precision, "use save_precision=fp32")
+    last_steps = getattr(args, "save_last_n_steps", None)
+    if last_steps is not None and (type(last_steps) is not int or last_steps < 0):
+        fail("save_last_n_steps", last_steps, "set save_last_n_steps to a nonnegative integer")
+
+    for key in ("save_last_n_steps_state", "save_last_n_epochs", "save_last_n_epochs_state"):
+        value = getattr(args, key, None)
+        if value is not None:
+            fail(key, value, f"remove {key}; use only save_last_n_steps for experiment retention")
+    selected_config = toml.load(selected_path)
+    explicit_keys = {
+        key for section, values in selected_config.items()
+        for key in (values if isinstance(values, dict) else {section: values})
+    }
+    if getattr(args, "save_state_to_huggingface", False) or "save_state_to_huggingface" in explicit_keys:
+        fail("save_state_to_huggingface", getattr(args, "save_state_to_huggingface", False),
+             "remove save_state_to_huggingface; keep complete states in the experiment folder")
+
+    args.experiment_dir = str(root)
+    args._experiment_root = str(root)
+
+
+def _setting_source(args, key: str) -> str:
+    """Name the CLI override when it supplied an effective setting."""
+    option = f"--{key}"
+    if any(token == option or token.startswith(option + "=") for token in sys.argv[1:]):
+        return f"CLI {option}"
+    return getattr(args, "_config_source", "CLI")
 
 
 def qwen_image_setup_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
@@ -358,16 +592,43 @@ def qwen_image_setup_parser(parser: argparse.ArgumentParser) -> argparse.Argumen
     parser.add_argument("--text_encoder", type=str, default=None, help="text encoder (Qwen2.5-VL) checkpoint path")
     parser.add_argument("--fp8_vl", action="store_true", help="use fp8 for Text Encoder model")
     parser.add_argument("--num_layers", type=int, default=None, help="Number of layers in the DiT model, default is None (60)")
+    parser.add_argument("--experiment_dir", type=str, default=None, help="opt-in portable Qwen-Image experiment root")
+    parser.add_argument("--val_dataset_config", type=str, default=None, help="path to the two-role validation dataset TOML")
+    parser.add_argument("--val_every_n_steps", type=int, default=200, help="validation interval in optimizer steps")
+    parser.add_argument("--val_seed_noise", type=int, default=42, help="common validation noise seed")
+    parser.add_argument("--val_level_noise_n", type=int, default=10, help="even number of validation noise levels")
+    parser.add_argument("--val_seed_noise_n", type=int, default=1, help="noise realizations per validation level")
     qwen_image_utils.add_model_version_args(parser)
     return parser
 
 
+def validate_validation_args(args):
+    source = getattr(args, "_config_source", "CLI")
+    values = {
+        "val_every_n_steps": (1, False),
+        "val_level_noise_n": (2, True),
+        "val_seed_noise_n": (1, False),
+    }
+    for key, (minimum, even) in values.items():
+        value = getattr(args, key)
+        if type(value) is not int or value < minimum or (even and value % 2):
+            qualifier = "even integer" if even else "integer"
+            raise ValueError(f"{source}: {key}={value!r}: expected {qualifier} >= {minimum}; correct this setting")
+    value = args.val_seed_noise
+    if type(value) is not int:
+        raise ValueError(f"{source}: val_seed_noise={value!r}: expected an integer, not a boolean; correct this setting")
+    value = args.val_dataset_config
+    if value is not None and (not isinstance(value, str) or not value.strip()):
+        raise ValueError(f"{source}: val_dataset_config={value!r}: expected a nonempty path; correct this setting")
+
+
 def validate_training_args(args):
     """Validate original-image consumers before any model or tracker is initialized."""
+    validate_validation_args(args)
     source = getattr(args, "_config_source", "CLI")
 
     def fail(key, reason):
-        raise ValueError(f"{source}: {key}: {reason}; correct this setting before training")
+        raise ValueError(f"{_setting_source(args, key)}: {key}: {reason}; correct this setting before training")
 
     def require_package(key, package):
         if importlib.util.find_spec(package) is None:
@@ -603,7 +864,11 @@ def validate_training_args(args):
         if not value and key == "network_weights":
             continue
         if not value or not Path(value).is_file():
-            fail(key, f"missing input file {value!r}; supply an existing path relative to process CWD")
+            anchor = (
+                f"experiment_dir {args._experiment_root}" if getattr(args, "_experiment_root", None)
+                else "process CWD"
+            )
+            fail(key, f"missing input file {value!r}; supply an existing path relative to {anchor}")
     for value in args.base_weights or []:
         if not Path(value).is_file():
             fail("base_weights", f"missing input file {value!r}")

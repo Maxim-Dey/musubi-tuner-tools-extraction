@@ -1,0 +1,517 @@
+{
+  "budget_maximum": 38,
+  "cache_manifest": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/cache-manifest.json",
+  "cases": {
+    "G01": {
+      "actual": {
+        "completed_updates": 12,
+        "duplicate_tag_steps": [],
+        "event_errors": [],
+        "finite_tags": 6,
+        "packages": [
+          {
+            "errors": [],
+            "location": "current",
+            "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/current_training_states/qwen_image_lora-step-4",
+            "sample_count": 1,
+            "step": 4
+          },
+          {
+            "errors": [],
+            "location": "current",
+            "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/current_training_states/qwen_image_lora-step-8",
+            "sample_count": 1,
+            "step": 8
+          },
+          {
+            "errors": [],
+            "location": "best",
+            "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/output/val_training_states/val-loss/qwen_image_lora-step-12",
+            "sample_count": 1,
+            "step": 12
+          }
+        ],
+        "validation_steps": [
+          0,
+          4,
+          8,
+          12
+        ]
+      },
+      "evidence_root": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G01",
+      "exact_command": "env HF_HUB_ENABLE_HF_TRANSFER=0 HF_HUB_OFFLINE=1 HF_HOME=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/hf-cache PYTHONPATH=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/src /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/.venv/bin/accelerate launch --mixed_precision bf16 /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/qwen_image_train_network.py --config_file /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g01/train.toml",
+      "exit_code": 0,
+      "expected": {
+        "completed_updates": 12,
+        "finite_tags": 6,
+        "validation_steps": [
+          0,
+          4,
+          8,
+          12
+        ]
+      },
+      "reason": "",
+      "status": "PASS"
+    },
+    "G02": {
+      "actual": {
+        "completed_updates": 10,
+        "duplicate_tag_steps": [],
+        "event_errors": [],
+        "finite_tags": 6,
+        "packages": [
+          {
+            "errors": [],
+            "location": "current",
+            "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/current_training_states/qwen_image_lora-step-4",
+            "sample_count": 1,
+            "step": 4
+          },
+          {
+            "errors": [],
+            "location": "current",
+            "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/current_training_states/qwen_image_lora-step-8",
+            "sample_count": 1,
+            "step": 8
+          },
+          {
+            "errors": [],
+            "location": "best",
+            "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/output/val_training_states/val-loss/qwen_image_lora-step-10",
+            "sample_count": 1,
+            "step": 10
+          }
+        ],
+        "validation_steps": [
+          0,
+          4,
+          8,
+          10
+        ]
+      },
+      "evidence_root": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G02",
+      "exact_command": "env HF_HUB_ENABLE_HF_TRANSFER=0 HF_HUB_OFFLINE=1 HF_HOME=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/hf-cache PYTHONPATH=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/src /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/.venv/bin/accelerate launch --mixed_precision bf16 /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/qwen_image_train_network.py --config_file /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g02/train.toml",
+      "exit_code": 0,
+      "expected": {
+        "completed_updates": 10,
+        "finite_tags": 6,
+        "validation_steps": [
+          0,
+          4,
+          8,
+          10
+        ]
+      },
+      "reason": "",
+      "status": "PASS"
+    },
+    "G03": {
+      "actual": {
+        "completed_optimizer_updates": 0,
+        "four_by_two_calls": 4,
+        "metric_absolute_differences": [
+          {
+            "train_eval_loss_high_noise": 0.0,
+            "train_eval_loss_low_noise": 0.0,
+            "train_eval_loss_mean": 0.0,
+            "val_loss_high_noise": 0.0,
+            "val_loss_low_noise": 0.0,
+            "val_loss_mean": 0.0
+          },
+          {
+            "train_eval_loss_high_noise": 0.0,
+            "train_eval_loss_low_noise": 0.0,
+            "train_eval_loss_mean": 0.0,
+            "val_loss_high_noise": 0.0,
+            "val_loss_low_noise": 0.0,
+            "val_loss_mean": 0.0
+          },
+          {
+            "train_eval_loss_high_noise": 0.0,
+            "train_eval_loss_low_noise": 0.0,
+            "train_eval_loss_mean": 0.0,
+            "val_loss_high_noise": 0.0,
+            "val_loss_low_noise": 0.0,
+            "val_loss_mean": 0.0
+          }
+        ],
+        "status": "PASS",
+        "ten_by_one_calls": 1,
+        "tolerance": {
+          "atol": 0.0001,
+          "rtol": 0.001
+        },
+        "validation_fingerprints": {
+          "canonical": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+          "fresh_process": "3876dbd531fa5c37e90a053c986ab2605d6ac801b012f7a556cdcff08395b4ad",
+          "renamed_copy": "b5c3cf1920af6f89b1fa7196a5521ee8f115e51259c658a90322f432eb5628bf",
+          "ten_by_one": "b5247848a351c3a793548f6d1bb8d7697905dc51a73156d497f799fdc2035b37"
+        },
+        "weights_sha256": "a3e9bb509819efd3f2b15072f8844001ff201637fbb847694ab5272bcfb4883b",
+        "worker_evidence": [
+          "same-process.json",
+          "fresh-process.json",
+          "renamed.json",
+          "ten-by-one.json"
+        ]
+      },
+      "evidence_root": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G03",
+      "exact_command": "env HF_HUB_ENABLE_HF_TRANSFER=0 HF_HUB_OFFLINE=1 HF_HOME=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/hf-cache PYTHONPATH=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/src /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/.venv/bin/python /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/scripts/real_probe.py g03 --checkpoint /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/selected-checkpoint.txt --config /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g03-4x2/train.toml --renamed-config /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g03-renamed/train.toml --ten-by-one-config /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g03-10x1/train.toml",
+      "exit_code": 0,
+      "expected": {
+        "four_by_two_calls": 4,
+        "optimizer_updates": 0,
+        "ten_by_one_calls": 1
+      },
+      "reason": "",
+      "status": "PASS"
+    },
+    "G04": {
+      "actual": {
+        "capture_bytes": 146817600,
+        "capture_limit_bytes": 536870912,
+        "completed_optimizer_updates": 0,
+        "directed_sigma_sqrt_checks": 1,
+        "forward_captures": 40,
+        "forward_file_sha256": "09604391e8d5b26a8e9170435dc5269029fe2bb5bb3fc95f52f92a2fc674b91e",
+        "maximum_check_loss_absolute_difference": 7.450580596923828e-09,
+        "metric_absolute_differences": {
+          "train_eval_loss_high_noise": 1.1641532182693481e-09,
+          "train_eval_loss_low_noise": 1.6298145055770874e-09,
+          "train_eval_loss_mean": 1.3969838619232178e-09,
+          "val_loss_high_noise": 5.432715041719938e-10,
+          "val_loss_low_noise": 6.208817140973544e-10,
+          "val_loss_mean": 3.8805104962680304e-11
+        },
+        "observed_metrics": {
+          "train_eval_loss_high_noise": 0.035014529479667544,
+          "train_eval_loss_low_noise": 0.037199326790869236,
+          "train_eval_loss_mean": 0.03610692813526839,
+          "val_loss_high_noise": 0.027944562801470358,
+          "val_loss_low_noise": 0.029147551705439884,
+          "val_loss_mean": 0.02854605725345512
+        },
+        "reference_metrics": {
+          "train_eval_loss_high_noise": 0.03501453064382076,
+          "train_eval_loss_low_noise": 0.03719932842068374,
+          "train_eval_loss_mean": 0.03610692953225225,
+          "val_loss_high_noise": 0.027944563344741862,
+          "val_loss_low_noise": 0.02914755108455817,
+          "val_loss_mean": 0.028546057214650016
+        },
+        "reference_script_sha256": "4b48a3f459e40f33d505047c28b190bff6919843b7a89386642c2df5b77f620e",
+        "status": "PASS",
+        "tolerance": {
+          "atol": 0.0005,
+          "rtol": 0.005
+        }
+      },
+      "evidence_root": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G04",
+      "exact_command": "env HF_HUB_ENABLE_HF_TRANSFER=0 HF_HUB_OFFLINE=1 HF_HOME=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/hf-cache PYTHONPATH=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/src /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/.venv/bin/python /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/scripts/real_probe.py g04 --checkpoint /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/selected-checkpoint.txt --config /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g04/train.toml --out /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G04/forwards.jsonl",
+      "exit_code": 0,
+      "expected": {
+        "forward_captures": 40,
+        "optimizer_updates": 0,
+        "reference_tolerance": {
+          "atol": 0.0005,
+          "rtol": 0.005
+        }
+      },
+      "reason": "",
+      "status": "PASS"
+    },
+    "G05": {
+      "actual": {
+        "actual_adapter_max_abs_by_update": [
+          0.0,
+          0.0002286235394421965,
+          0.0003095775027759373,
+          0.0050337426364421844
+        ],
+        "adapter_sha256_equal_after_updates": [
+          true,
+          false,
+          false,
+          false
+        ],
+        "adapter_tensors_outside_tolerance_by_update": [
+          0,
+          295,
+          1515,
+          1636
+        ],
+        "completed_updates": {
+          "off": 4,
+          "on": 4,
+          "snapshot": 0
+        },
+        "initial_state_equal": true,
+        "inputs_equal_all_four": true,
+        "losses": [
+          {
+            "absolute_difference": 0.0,
+            "batch": 1,
+            "off": 0.04851683974266052,
+            "on": 0.04851683974266052
+          },
+          {
+            "absolute_difference": 0.0,
+            "batch": 2,
+            "off": 0.021230578422546387,
+            "on": 0.021230578422546387
+          },
+          {
+            "absolute_difference": 0.000722445547580719,
+            "batch": 3,
+            "off": 0.09943509846925735,
+            "on": 0.10015754401683807
+          },
+          {
+            "absolute_difference": 9.407103061676025e-05,
+            "batch": 4,
+            "off": 0.0427098385989666,
+            "on": 0.04261576756834984
+          }
+        ],
+        "snapshot_state_preserved": true
+      },
+      "evidence_root": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G05",
+      "exact_command": "env HF_HUB_ENABLE_HF_TRANSFER=0 HF_HUB_OFFLINE=1 HF_HOME=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/hf-cache PYTHONPATH=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/src /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/.venv/bin/python /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/scripts/real_probe.py g05 --snapshot-config /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g05-snapshot/train.toml --enabled /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g05-on/train.toml --disabled /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g05-off/train.toml --initial-adapter /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/selected-adapter.txt",
+      "exit_code": 1,
+      "expected": {
+        "adapter_tolerance": {
+          "atol": 1e-05,
+          "rtol": 0.005
+        },
+        "loss_tolerance": {
+          "atol": 0.0001,
+          "rtol": 0.001
+        },
+        "paired_updates": [
+          4,
+          4
+        ],
+        "snapshot_updates": 0
+      },
+      "reason": "Loss differs at batch 3 despite exact paired inputs; first LoRA divergence is after update 2 (the first update with nonzero effective LR). Cause not established.",
+      "status": "FAIL"
+    },
+    "G06-best": {
+      "actual": {
+        "completed_updates": 4,
+        "final_step": 16,
+        "input_best_step": 12,
+        "packages": [
+          {
+            "errors": [],
+            "location": "current",
+            "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/current_training_states/qwen_image_lora-step-12",
+            "sample_count": 1,
+            "step": 12
+          },
+          {
+            "errors": [],
+            "location": "best",
+            "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/val_training_states/val-loss/qwen_image_lora-step-16",
+            "sample_count": 1,
+            "step": 16
+          }
+        ],
+        "validation_steps": [
+          12,
+          16
+        ]
+      },
+      "evidence_root": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G06-best",
+      "exact_command": "env HF_HUB_ENABLE_HF_TRANSFER=0 HF_HUB_OFFLINE=1 HF_HOME=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/hf-cache PYTHONPATH=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/src /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/.venv/bin/accelerate launch --mixed_precision bf16 /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/qwen_image_train_network.py --config_file /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/train.toml --resume /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-best/output/val_training_states/val-loss/qwen_image_lora-step-12",
+      "exit_code": 0,
+      "expected": {
+        "complete_final_package": true,
+        "completed_updates": 4,
+        "validation_steps": [
+          12,
+          16
+        ]
+      },
+      "reason": "",
+      "status": "PASS"
+    },
+    "G06-current": {
+      "actual": {
+        "attempted_final_step": 12,
+        "completed_updates": 4,
+        "copied_prior_best_step": 12,
+        "initial_current_step": 8,
+        "packages": [
+          {
+            "errors": [],
+            "location": "current",
+            "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/current_training_states/qwen_image_lora-step-8",
+            "sample_count": 1,
+            "step": 8
+          },
+          {
+            "errors": [],
+            "location": "best",
+            "path": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/val_training_states/val-loss/qwen_image_lora-step-12",
+            "sample_count": 1,
+            "step": 12
+          }
+        ],
+        "published_final_new_best": false,
+        "save_error": "published state already exists at val_training_states/val-loss/qwen_image_lora-step-12",
+        "validation_steps": [
+          8,
+          12
+        ]
+      },
+      "evidence_root": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G06-current",
+      "exact_command": "env HF_HUB_ENABLE_HF_TRANSFER=0 HF_HUB_OFFLINE=1 HF_HOME=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/hf-cache PYTHONPATH=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/src /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/.venv/bin/accelerate launch --mixed_precision bf16 /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/qwen_image_train_network.py --config_file /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/train.toml --resume /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/experiments/g06-current/output/current_training_states/qwen_image_lora-step-8",
+      "exit_code": 1,
+      "expected": {
+        "complete_final_package": true,
+        "completed_updates": 4,
+        "validation_steps": [
+          8,
+          12
+        ]
+      },
+      "reason": "Chosen current step 8 plus four updates collided with the copied prior best package at step 12; immutable publication refused overwrite.",
+      "status": "FAIL"
+    },
+    "G07": {
+      "actual": {
+        "g01": {
+          "duplicate_tag_steps": [],
+          "event_errors": [],
+          "package_errors": [],
+          "validation_steps": [
+            0,
+            4,
+            8,
+            12
+          ]
+        },
+        "g02": {
+          "duplicate_tag_steps": [],
+          "event_errors": [],
+          "package_errors": [],
+          "validation_steps": [
+            0,
+            4,
+            8,
+            10
+          ]
+        },
+        "g06-best": {
+          "duplicate_tag_steps": [],
+          "event_errors": [],
+          "package_errors": [],
+          "validation_steps": [
+            12,
+            16
+          ]
+        },
+        "g06-current": {
+          "duplicate_tag_steps": [],
+          "event_errors": [],
+          "package_errors": [],
+          "validation_steps": [
+            8,
+            12
+          ]
+        }
+      },
+      "evidence_root": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G07",
+      "exit_code": 0,
+      "expected": {
+        "all_real_best_events_have_matching_complete_best_package": true,
+        "no_duplicate_tag_steps": true,
+        "six_finite_tags_at_due_steps": true
+      },
+      "reason": "G06-current step-12 event improved over copied best but could not publish its best package after the step-name collision.",
+      "status": "FAIL"
+    },
+    "G08": {
+      "actual": {
+        "failed": 0,
+        "junit": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G08/junit.xml",
+        "passed": 228,
+        "warnings": 1
+      },
+      "evidence_root": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G08",
+      "exact_command": "env PYTHONPATH=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/src /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/.venv/bin/python -B -m pytest -q --tb=short --junitxml=/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G08/junit.xml /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/tests/test_qwen_image_experiment_states.py /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/tests/test_qwen_image_experiment_paths.py /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/tests/test_qwen_image_validation_inputs.py /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/tests/test_qwen_image_validation_training.py /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/tests/test_qwen_image_val_example.py /workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/code/tests/test_qwen_image_dataset_cache.py",
+      "exit_code": 0,
+      "expected": {
+        "controlled_cpu_tests": 228,
+        "real_model_updates": 0
+      },
+      "reason": "",
+      "status": "PASS"
+    },
+    "G09": {
+      "actual": {
+        "completed_updates": 0,
+        "inventory": "0, NVIDIA RTX PRO 6000 Blackwell Server Edition, 97887 MiB, 595.91.07",
+        "observed_suitable_gpus": 1
+      },
+      "evidence_root": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G09",
+      "expected": {
+        "conditional_updates": 2,
+        "minimum_suitable_gpus": 2
+      },
+      "reason": "One suitable GPU on this Pod.",
+      "status": "NOT RUN"
+    },
+    "G10": {
+      "actual": {
+        "agent_test_processes": [],
+        "case_statuses": {
+          "G01": "PASS",
+          "G02": "PASS",
+          "G03": "PASS",
+          "G04": "PASS",
+          "G05": "FAIL",
+          "G06-best": "PASS",
+          "G06-current": "FAIL",
+          "G07": "FAIL",
+          "G08": "PASS",
+          "G09": "NOT RUN"
+        },
+        "completed_updates": 38,
+        "gpu_compute_apps": "",
+        "inspector_summary": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G10/summary.json"
+      },
+      "evidence_root": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/G10",
+      "expected": {
+        "budget_maximum": 38,
+        "honest_case_statuses": true,
+        "no_agent_test_processes": true
+      },
+      "reason": "Overall verification fails because G05, G06-current and dependent G07 failed.",
+      "status": "PASS"
+    }
+  },
+  "completed_optimizer_updates": 38,
+  "config_manifest": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/config-manifest.json",
+  "fixture_manifest": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/fixture-manifest.json",
+  "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "gpu_memory_total_mib": 97887,
+  "interpretation": "New GPU clears the old step-0 CUDA OOM and runs original Qwen-Image BF16/1024/LoRA16 unchanged. Full matrix does not pass because of G05 numeric mismatch and G06-current package-name collision; no extra training was run.",
+  "old_l40s_report_preserved": true,
+  "one_gpu": true,
+  "overall": "FAIL",
+  "pod": "izl7q64qraoc2h",
+  "probe_manifest": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/probe-manifest.json",
+  "process_inventory": {
+    "agent_test_processes": [],
+    "gpu_compute_apps": "",
+    "pod_running": true
+  },
+  "remote_root": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90",
+  "run_id": "20260923T0705Z-b8ed90",
+  "selected_adapter_sha256": "a3e9bb509819efd3f2b15072f8844001ff201637fbb847694ab5272bcfb4883b",
+  "source_manifest": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/source-manifest.json",
+  "static_gate": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90/evidence/static-gate.json"
+}

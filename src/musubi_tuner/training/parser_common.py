@@ -780,6 +780,7 @@ def setup_parser_common() -> argparse.ArgumentParser:
 
 def read_config_from_file(args: argparse.Namespace, parser: argparse.ArgumentParser):
     source = "CLI"
+    selected_train_config_path = None
     actions = {action.dest: action for action in parser._actions}
     if args.config_file:
         source = args.config_file if args.config_file.endswith(".toml") else args.config_file + ".toml"
@@ -787,6 +788,7 @@ def read_config_from_file(args: argparse.Namespace, parser: argparse.ArgumentPar
             config = toml.load(source)
         except (OSError, ValueError) as error:
             raise ValueError(f"{source}: cannot read training TOML; supply a valid existing file: {error}") from error
+        selected_train_config_path = str(pathlib.Path(source).resolve())
         flattened = {}
         for section, values in config.items():
             for key, value in values.items() if isinstance(values, dict) else [(section, values)]:
@@ -815,6 +817,7 @@ def read_config_from_file(args: argparse.Namespace, parser: argparse.ArgumentPar
             validate_original_selection(action.dest, value, f"CLI {option_string}")
     validate_parser_values(args, parser, source)
     args._config_source = source
+    args._selected_train_config_path = selected_train_config_path
     return args
 
 

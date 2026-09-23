@@ -1,0 +1,373 @@
+{
+  "cases": {
+    "G01": {
+      "actual": {
+        "completed_updates": 0,
+        "exit_code": 1,
+        "finite_tags": 6,
+        "missing_expected_validation_steps": [
+          4,
+          8,
+          12
+        ],
+        "packages": 0,
+        "step0_scalars": {
+          "train_eval_loss_high_noise": 0.03556947410106659,
+          "train_eval_loss_low_noise": 0.037392906844615936,
+          "train_eval_loss_mean": 0.03648119047284126,
+          "val_loss_high_noise": 0.028306109830737114,
+          "val_loss_low_noise": 0.029312534257769585,
+          "val_loss_mean": 0.02880932204425335
+        },
+        "validation_calls": 1,
+        "validation_steps": [
+          0
+        ]
+      },
+      "end_utc": "2026-09-23T03:12:44Z",
+      "evidence": [
+        "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G01/command.txt",
+        "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G01/stdout.txt",
+        "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G01/stderr.txt",
+        "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G01/exit.txt",
+        "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G07/results.json"
+      ],
+      "exact_command": "env HF_HUB_ENABLE_HF_TRANSFER=0 HF_HUB_OFFLINE=1 HF_HOME=/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/hf-cache PYTHONPATH=/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/code/src /workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/.venv/bin/accelerate launch --mixed_precision bf16 /workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/code/qwen_image_train_network.py --config_file /workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/experiments/g01/train.toml",
+      "expected": {
+        "complete_packages": true,
+        "completed_updates": 12,
+        "six_finite_tags_per_step": true,
+        "validation_steps": [
+          0,
+          4,
+          8,
+          12
+        ]
+      },
+      "numeric_differences": "No post-update scalar comparison exists: zero optimizer updates; initial six finite scalars only.",
+      "reason": "Step-0 best sample generation failed with CUDA OOM at 1024/BF16 on one L40S before any optimizer update",
+      "requirements": [
+        "FR-008",
+        "SC-002",
+        "SC-005"
+      ],
+      "retry": {
+        "allocator": "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True",
+        "case": "G01-alloc-retry",
+        "completed_updates": 0,
+        "end_utc": "2026-09-23T03:17:36Z",
+        "error": "CUDA OOM requesting 192 MiB with 63 MiB free",
+        "evidence": [
+          "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G01-alloc-retry/command.txt",
+          "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G01-alloc-retry/stderr.txt",
+          "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G01-alloc-retry/exit.txt",
+          "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G01-alloc-retry-preflight.json"
+        ],
+        "exact_command": "env PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True HF_HUB_ENABLE_HF_TRANSFER=0 HF_HUB_OFFLINE=1 HF_HOME=/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/hf-cache PYTHONPATH=/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/code/src /workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/.venv/bin/accelerate launch --mixed_precision bf16 /workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/code/qwen_image_train_network.py --config_file /workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/experiments/g01-alloc-retry/train.toml",
+        "exit_code": 1,
+        "start_utc": "2026-09-23T03:16:41Z",
+        "validation_calls": 1
+      },
+      "start_utc": "2026-09-23T03:11:50Z",
+      "status": "FAIL"
+    },
+    "G02": {
+      "actual": {
+        "completed_updates": 0,
+        "exit_code": 1,
+        "finite_tags": 6,
+        "missing_expected_validation_steps": [
+          4,
+          8,
+          10
+        ],
+        "packages": 0,
+        "step0_scalars": {
+          "train_eval_loss_high_noise": 0.03556947410106659,
+          "train_eval_loss_low_noise": 0.037392906844615936,
+          "train_eval_loss_mean": 0.03648119047284126,
+          "val_loss_high_noise": 0.028306109830737114,
+          "val_loss_low_noise": 0.029312534257769585,
+          "val_loss_mean": 0.02880932204425335
+        },
+        "validation_calls": 1,
+        "validation_steps": [
+          0
+        ]
+      },
+      "end_utc": "2026-09-23T03:15:05Z",
+      "evidence": [
+        "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G02/command.txt",
+        "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G02/stdout.txt",
+        "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G02/stderr.txt",
+        "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G02/exit.txt",
+        "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G07/results.json"
+      ],
+      "exact_command": "env HF_HUB_ENABLE_HF_TRANSFER=0 HF_HUB_OFFLINE=1 HF_HOME=/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/hf-cache PYTHONPATH=/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/code/src /workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/.venv/bin/accelerate launch --mixed_precision bf16 /workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/code/qwen_image_train_network.py --config_file /workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/experiments/g02/train.toml",
+      "expected": {
+        "complete_packages": true,
+        "completed_updates": 10,
+        "six_finite_tags_per_step": true,
+        "validation_steps": [
+          0,
+          4,
+          8,
+          10
+        ]
+      },
+      "numeric_differences": "No post-update scalar comparison exists: zero optimizer updates; initial six finite scalars only.",
+      "reason": "Step-0 best sample generation failed with CUDA OOM at 1024/BF16 on one L40S before any optimizer update",
+      "requirements": [
+        "FR-009",
+        "SC-002"
+      ],
+      "start_utc": "2026-09-23T03:14:10Z",
+      "status": "FAIL"
+    },
+    "G03": {
+      "actual": {
+        "completed_updates": 0,
+        "validation_calls": 0
+      },
+      "evidence": [],
+      "exact_command": null,
+      "exit_code": null,
+      "expected": {
+        "completed_updates": 0,
+        "validation_calls": 5
+      },
+      "numeric_differences": null,
+      "reason": "No complete G01 checkpoint after step-0 CUDA OOM",
+      "requirements": [
+        "FR-010",
+        "SC-003"
+      ],
+      "status": "NOT RUN"
+    },
+    "G04": {
+      "actual": {
+        "completed_updates": 0,
+        "validation_calls": 0
+      },
+      "evidence": [],
+      "exact_command": null,
+      "exit_code": null,
+      "expected": {
+        "completed_updates": 0,
+        "validation_calls": 1
+      },
+      "numeric_differences": null,
+      "reason": "No complete G01 checkpoint after step-0 CUDA OOM",
+      "requirements": [
+        "FR-010",
+        "SC-003"
+      ],
+      "status": "NOT RUN"
+    },
+    "G05": {
+      "actual": {
+        "completed_updates": 0,
+        "validation_calls": 0
+      },
+      "evidence": [],
+      "exact_command": null,
+      "exit_code": null,
+      "expected": {
+        "completed_updates_max": 8,
+        "validation_calls_max": 3
+      },
+      "numeric_differences": null,
+      "reason": "No selected G01 adapter after step-0 CUDA OOM",
+      "requirements": [
+        "FR-011",
+        "SC-004"
+      ],
+      "status": "NOT RUN"
+    },
+    "G06": {
+      "actual": {
+        "completed_updates": 0,
+        "validation_calls": 0
+      },
+      "evidence": [],
+      "exact_command": null,
+      "exit_code": null,
+      "expected": {
+        "completed_updates_max": 8,
+        "validation_calls_max": 4
+      },
+      "numeric_differences": null,
+      "reason": "No complete G01 current and best packages after step-0 CUDA OOM",
+      "requirements": [
+        "FR-012",
+        "SC-004"
+      ],
+      "status": "NOT RUN"
+    },
+    "G07": {
+      "actual": {
+        "full_assessment": false,
+        "packages": 0,
+        "partial_step0_tags_per_run": 6
+      },
+      "evidence": [
+        "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G07/results.json"
+      ],
+      "exact_command": null,
+      "exit_code": null,
+      "expected": {
+        "complete_event_and_package_inventories": true
+      },
+      "numeric_differences": null,
+      "reason": "G01/G02 stopped at step 0 and G06 has no packages; full attribution/retention cannot be assessed",
+      "requirements": [
+        "FR-013",
+        "SC-005"
+      ],
+      "status": "NOT RUN"
+    },
+    "G08": {
+      "actual": {
+        "errors": 0,
+        "exit_code": 0,
+        "failures": 0,
+        "real_model_updates": 0,
+        "skips": 0,
+        "tests": 228
+      },
+      "end_utc": "2026-09-23T03:18:55Z",
+      "evidence": [
+        "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G08/command.txt",
+        "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G08/stdout.txt",
+        "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G08/stderr.txt",
+        "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G08/junit.xml",
+        "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G08/exit.txt"
+      ],
+      "exact_command": "env CUDA_VISIBLE_DEVICES= HF_HUB_OFFLINE=1 PYTHONPATH=/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/code/src /workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/.venv/bin/python -B -m pytest -q --tb=short --junitxml=/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G08/junit.xml /workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/code/tests/test_qwen_image_experiment_states.py /workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/code/tests/test_qwen_image_experiment_paths.py /workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/code/tests/test_qwen_image_validation_inputs.py /workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/code/tests/test_qwen_image_validation_training.py /workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/code/tests/test_qwen_image_val_example.py /workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/code/tests/test_qwen_image_dataset_cache.py",
+      "expected": {
+        "all_controlled_tests_pass": true,
+        "real_model_updates": 0
+      },
+      "numeric_differences": {
+        "failed_cases": 0,
+        "skipped_cases": 0
+      },
+      "requirements": [
+        "FR-014"
+      ],
+      "start_utc": "2026-09-23T03:18:02Z",
+      "status": "PASS"
+    },
+    "G09": {
+      "actual": {
+        "completed_updates": 0,
+        "gpu_rows": [
+          "0, NVIDIA L40S, 46068, 45458, 580.178.04"
+        ],
+        "reason": "Selected Pod has only one suitable GPU; two-rank case requires two on same Pod",
+        "second_pod_used": false,
+        "status": "NOT RUN",
+        "validation_calls": 0
+      },
+      "evidence": [
+        "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G09/gpu-inventory.txt",
+        "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G09/result.json"
+      ],
+      "exact_command": null,
+      "exit_code": null,
+      "expected": {
+        "completed_updates_if_run": 2,
+        "suitable_gpus": 2
+      },
+      "numeric_differences": null,
+      "requirements": [
+        "FR-015",
+        "SC-006",
+        "SC-007"
+      ],
+      "status": "NOT RUN"
+    },
+    "G10": {
+      "actual": {
+        "agent_process_inventory": "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G10/final-processes.json",
+        "all_ten_rows_reported": true,
+        "completed_updates_total": 0,
+        "overall_status": "FAIL",
+        "pod_preserved": true,
+        "validation_calls_total_including_retry": 3
+      },
+      "evidence": [
+        "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G10/summary.json",
+        "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/preflight.json",
+        "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/source-manifest.json"
+      ],
+      "exact_command": "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/.venv/bin/python /workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/scripts/inspect_evidence.py g10 --root /workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a --out /workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G10/summary.json",
+      "expected": {
+        "all_ten_rows_reported": true,
+        "pod_preserved": true,
+        "updates_max": 38
+      },
+      "requirements": [
+        "FR-016",
+        "FR-017",
+        "FR-018",
+        "SC-001",
+        "SC-006",
+        "SC-007"
+      ],
+      "status": "PASS"
+    }
+  },
+  "completed_updates_total": 0,
+  "final_processes": {
+    "active_agent_cases": 0,
+    "agent_case_alive": {
+      "G01": null,
+      "G01-alloc-retry": null,
+      "G02": null,
+      "G08": null
+    },
+    "agent_case_pids": {
+      "G01": 6615,
+      "G01-alloc-retry": 7256,
+      "G02": 6774,
+      "G08": 7409
+    },
+    "gpu_processes": [],
+    "gpu_query_exit": 0,
+    "observed_utc": "2026-09-23T03:25:39.635953+00:00",
+    "selected_pod_running": true,
+    "user_processes_touched": false
+  },
+  "fixtures": {
+    "bucket_diversity_available": false,
+    "roles": {
+      "train": 3,
+      "val_familiar": 2,
+      "val_unfamiliar": 3
+    },
+    "source_copy_hashes_verified": true
+  },
+  "gate_passed": true,
+  "maximum_completed_updates": 38,
+  "note": "Command/exit inventory only; measured PASS/FAIL/NOT RUN and numeric differences require manual G10 reconciliation.",
+  "overall_status": "FAIL",
+  "readme_reconciliation": {
+    "diff_sha256": "5ba337a3a601a0a67ec53e2e17c3214652ebc901c107c7e6125da7c1ccabc656",
+    "local_report_link": "specs/006-runpod-verification/verification.md",
+    "remote_diff": "/workspace/musubi-val-loss-tests/20260923T0243Z-e8af43a/evidence/G10/readme-diff.patch"
+  },
+  "retrieval": "Concise command/exit/results inspected through verified interactive SSH; bulk logs and event files remain in isolated run root.",
+  "run_id": "20260923T0243Z-e8af43a",
+  "selected_pod": "yxd2b6cm3e8gfa",
+  "source": {
+    "archive_sha256": "1fd5305e03d064165d2f5434a420ef05278e0d48be753954d0e2457ce46c8485",
+    "base_commit": "e8af43abc32d967153e3aa3c31d50c77d3f7c47e",
+    "models": {
+      "/workspace/qwen_2.5_vl_7b.safetensors": "cfafd739459bc86257397259f612a9aee88e5b98e85b5c0d0d1717e898b3463a",
+      "/workspace/qwen_image_2512_bf16.safetensors": "cbf55390fff27dbc785046d7007b04e0c5dd7421e7ef128f2831eacb53a8e075",
+      "/workspace/qwen_image_vae.safetensors": "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f"
+    },
+    "overlay_files": 38
+  }
+}

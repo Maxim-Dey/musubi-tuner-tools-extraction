@@ -1,0 +1,8 @@
+{
+  "run_id": "20260923T0705Z-b8ed90",
+  "selected_pod": "izl7q64qraoc2h",
+  "created_utc": "2026-09-23T07:06:23.879163+00:00",
+  "root": "/workspace/musubi-val-loss-tests/20260923T0705Z-b8ed90",
+  "base_commit": "e8af43abc32d967153e3aa3c31d50c77d3f7c47e",
+  "overlay_sha256_expected": "231dc3b5ec35780809b5a7a3df924cd40df93600da0f5854f6eee0d8e405f8e1"
+}
