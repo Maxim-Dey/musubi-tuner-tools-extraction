@@ -18,4 +18,3 @@ references/
 dist/
 build/
 *.egg-info/
-.notes/
