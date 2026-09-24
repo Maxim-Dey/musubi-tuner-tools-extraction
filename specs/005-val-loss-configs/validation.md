@@ -1,5 +1,7 @@
 # Stage 4 Local Validation
 
+Earlier sections record the checks and discrepancies at the time they ran. The T024–T025 resolution and current results are at the end of this file.
+
 ## T001: Existing CPU baseline (2026-09-23)
 
 Before example creation, qwen_image_lora_val_example/ did not exist; no user file at that path was overwritten. The current Stage 1–3 CPU baseline used the existing Python 3.12 environment, PYTHONPATH=src, CUDA_VISIBLE_DEVICES=-1, HF_HUB_OFFLINE=1, TRANSFORMERS_OFFLINE=1, WANDB_MODE=disabled, and PYTHONDONTWRITEBYTECODE=1.
@@ -144,3 +146,8 @@ Local Python 3.12 checks used `C:/Users/inbox/Desktop/musubi-tuner-flux2dev-lora
 
 The unfiltered checks exposed existing drift outside the one-command cache change. The physical `qwen_image_lora_val_example/train.toml` now uses rank/alpha 32, 5,000 steps, 50-step cadence, `val_seed_noise_n=2`, and an extra `log_prefix`; the Stage 4 spec and old example tests require rank/alpha 16, 1,600 steps, 200-step cadence, and `val_seed_noise_n=1`. `train-dataset.toml` uses batch size 16 versus FR-005's 1. Two legacy config tests still read the removed `config_for_qwen_image_lora/` files. These tests were not rewritten to accept different numerical requirements; final convergence must record the discrepancies. The first unfiltered example run had 9 failures and 131 passes; after cache-test updates, four template-contract failures remain. No full Qwen model, GPU training, download, or server verification ran during this local revision.
 
+## T024–T025: User-selected training controls and removed legacy folder (2026-09-24)
+
+The user clarified that the supplied experiment files do not impose fixed numerical training values. The specification, plan, guide, and example tests now treat `max_train_steps`, training batch size, rank, cadence, and other numerical controls as user choices. The 1,600-step/200-interval schedule and 10-by-1 noise grid remain controlled CPU test inputs. The shipped 5,000-step configuration was not changed. The removed `config_for_qwen_image_lora/` folder was not recreated; its two tests now read the supported experiment files.
+
+With Python 3.12, `PYTHONPATH=src`, `CUDA_VISIBLE_DEVICES=-1`, offline Hugging Face/Transformers, and disabled W&B, the unfiltered nine-module affected Qwen CPU suite passed: **428 passed, 1 skipped**. The separate Qwen experiment RNG integrity module passed: **11 passed**. After a final test-fixture cleanup, the example module passed **19 tests**, and the edited config-precedence test passed **1 test**. Ruff and `git diff --check` passed. One PyTorch scheduler warning remains. No full-model, GPU, download, or server check ran in this local stage.

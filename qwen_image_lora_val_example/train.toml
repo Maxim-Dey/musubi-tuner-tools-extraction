@@ -18,6 +18,7 @@ logging_dir = "output/tensorboard"
 network_module = "networks.lora_qwen_image"
 network_dim = 32
 network_alpha = 32
+network_dropout = 0.05
 
 # Optimizer and schedule
 max_train_steps = 5000

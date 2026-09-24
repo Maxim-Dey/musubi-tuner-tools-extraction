@@ -16,7 +16,7 @@ from musubi_tuner.training.parser_common import setup_parser_common, read_config
 from musubi_tuner.training.sampling_prompts import load_prompts
 
 ROOT = Path(__file__).resolve().parents[1]
-TEMPLATES = ROOT / "config_for_qwen_image_lora"
+EXAMPLE = ROOT / "qwen_image_lora_val_example"
 
 
 def resolve(monkeypatch, tmp_path, config=None, cli=()):
@@ -30,16 +30,16 @@ def resolve(monkeypatch, tmp_path, config=None, cli=()):
     return read_config_from_file(parser.parse_args(), parser)
 
 
-def test_all_training_template_values_and_cli_precedence(tmp_path, monkeypatch):
-    config = toml.load(TEMPLATES / "train.toml")
-    assert len(config) == 40
+def test_example_training_values_and_cli_precedence(tmp_path, monkeypatch):
+    config = toml.load(EXAMPLE / "train.toml")
     args = resolve(monkeypatch, tmp_path, config)
     for key, value in config.items():
         assert getattr(args, key) == value
+    assert resolve(monkeypatch, tmp_path, {**config, "max_train_steps": 37}).max_train_steps == 37
     args = resolve(monkeypatch, tmp_path, config, ["--network_dim", "8", "--learning_rate", "0.002", "--fp8_base"])
     assert (args.network_dim, args.learning_rate, args.fp8_base) == (8, 0.002, True)
-    assert args.max_train_steps == 1600
-    assert type(args.lr_warmup_steps) is int and args.lr_warmup_steps == 200
+    assert args.max_train_steps == config["max_train_steps"]
+    assert type(args.lr_warmup_steps) is int and args.lr_warmup_steps == config["lr_warmup_steps"]
 
 
 def test_validation_defaults_toml_and_cli_precedence(tmp_path, monkeypatch):
@@ -157,8 +157,8 @@ def test_raw_excluded_fields_cannot_be_masked(tmp_path, monkeypatch, raw, cli):
         resolve(monkeypatch, tmp_path, raw, cli)
 
 
-def test_prompt_templates_and_all_readers(tmp_path):
-    supplied = load_prompts(str(TEMPLATES / "sample_prompts.txt"))
+def test_example_prompts_and_all_readers(tmp_path):
+    supplied = load_prompts(str(EXAMPLE / "sample_prompts.txt"))
     assert len(supplied) == 2
     assert [p["enum"] for p in supplied] == [0, 1]
     assert all(p["sample_steps"] == 30 and p["cfg_scale"] == 4 for p in supplied)

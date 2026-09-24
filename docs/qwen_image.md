@@ -1,6 +1,6 @@
 # Qwen-Image original adapter training
 
-This repository trains original Qwen-Image adapters with the existing Musubi Tuner engine. The supported workflow is captioned images → latent cache → caption embedding cache → adapter training with optional sample PNGs. Use the [Russian README](../README.md) and the supplied [training template](../qwen_image_lora_val_example/train.toml).
+This repository trains original Qwen-Image adapters with the existing Musubi Tuner engine. The supported workflow is captioned images → latent cache → caption embedding cache → adapter training with optional sample PNGs. Use the [Russian README](../README.md) and the supplied [experiment configuration](../qwen_image_lora_val_example/train.toml).
 
 Set model and dataset paths in the training TOML. Run from the repository root; without `experiment_dir`, relative paths resolve from the process CWD.
 
@@ -12,7 +12,7 @@ The package must be installed or `src` included in `PYTHONPATH`. The training co
 
 Use the original DiT, RGB VAE and Qwen2.5-VL weights. The text loader obtains tokenizer assets from `Qwen/Qwen-Image`, subfolder `tokenizer`; prepare them in the operational environment. DiT execution uses bf16. The training VAE dtype default is bf16; the Qwen VAE loader retains its existing loading behavior. `num_layers` defaults to 60 and must match the checkpoint.
 
-The supplied paths, H200 comment, rank 16, 1600 updates and batch/resolution values are examples, not fixed requirements. Defaults are overridden by training TOML and then explicit CLI. Omitted CLI flags preserve TOML; store-true flags cannot disable a true TOML setting. Unknown fields/types, excluded selectors and invalid effective values fail early. The only model version is `original`. [Alternative adapters](loha_lokr.md) retain the Qwen model engine.
+Set `max_train_steps`, training batch size, rank, learning rate, and validation/save/sample intervals for your run in the configuration files. Defaults are overridden by training TOML and then explicit CLI. Omitted CLI flags preserve TOML; store-true flags cannot disable a true TOML setting. Unknown fields/types, excluded selectors and invalid effective values fail early. The only model version is `original`. [Alternative adapters](loha_lokr.md) retain the Qwen model engine.
 
 Both cache commands have independent CLI settings for manual use. `batch_size` caps encoding chunks; the dataset declaration controls training batch size. `num_workers` must be positive when explicitly set. Qwen cache commands skip existing files by default, for both training and validation datasets, and create missing files. The automatic check first fills missing files; validation then verifies cache contents against current images and captions and rebuilds its caches if needed. Training caches are checked by file existence. `keep_cache` preserves old files outside the current dataset. Latent cache debug supports `image` and `console`; Qwen latent caching does not accept an explicit `vae_dtype` or tiling/chunk options.
 
@@ -68,7 +68,7 @@ tensorboard --logdir "$ROOT/output/tensorboard"
 
 The training command uses the model paths and dataset declarations in `train.toml` to fill missing caches. The selected validation TOML processes both roles and preflights sources and cache collisions before model loading.
 
-With the example's 1,600 completed updates and 200-step validation interval, fresh-run validation steps are `0, 200, 400, 600, 800, 1000, 1200, 1400, 1600`; the final step is evaluated once. The original BF16 DiT and BF16 training compute remain in use, while the sole resumable adapter is saved as FP32: BF16 saving would round that only copy and prevent exact state resume. To disable samples in `train.toml`, remove both `sample_prompts` and `sample_every_n_steps`; `sample_prompts = ""` is not a valid substitute. A step-0 new-best package still includes samples when sampling is enabled despite `sample_at_first = false`.
+Fresh-run validation occurs at step 0, at each configured `val_every_n_steps` boundary, and at the final `max_train_steps` step. A coincident final and periodic step is evaluated once. The original BF16 DiT and BF16 training compute remain in use, while the sole resumable adapter is saved as FP32: BF16 saving would round that only copy and prevent exact state resume. To disable samples in `train.toml`, remove both `sample_prompts` and `sample_every_n_steps`; `sample_prompts = ""` is not a valid substitute. A step-0 new-best package still includes samples when sampling is enabled despite `sample_at_first = false`.
 
 Each save produces one complete `<output_name>-step-<X>` directory under `output/current_training_states/` or, for the one best state, `output/val_training_states/val-loss/`. It has one FP32 LoRA `model.safetensors`, optimizer/scheduler files, RNG state for each rank, `val_loss_state.json`, `experiment_state.json`, and `samples/` with PNGs when sampling is enabled. Omitted, `float`, and `fp32` save precision are accepted; `fp16` and `bf16` are rejected because the sole model file must retain exact FP32 weights. There are no separate adapter exports or `*-state` duplicates in this mode.
 
@@ -81,11 +81,11 @@ To rename or move the entire prepared experiment, set `ROOT` to its new absolute
 ```bash
 ROOT=/absolute/path/to/moved-qwen-image-experiment
 cd /tmp
-accelerate launch --mixed_precision bf16 "$REPO/qwen_image_train_network.py" --config_file "$ROOT/train.toml" --resume "$ROOT/output/current_training_states/qwen_image_lora-step-<X>"
-accelerate launch --mixed_precision bf16 "$REPO/qwen_image_train_network.py" --config_file "$ROOT/train.toml" --resume "$ROOT/output/val_training_states/val-loss/qwen_image_lora-step-<X>"
+accelerate launch --mixed_precision bf16 "$REPO/qwen_image_train_network.py" --config_file "$ROOT/train.toml" --resume "$ROOT/output/current_training_states/<output_name>-step-<X>"
+accelerate launch --mixed_precision bf16 "$REPO/qwen_image_train_network.py" --config_file "$ROOT/train.toml" --resume "$ROOT/output/val_training_states/val-loss/<output_name>-step-<X>"
 ```
 
-Keep the validation images, captions, source-bound caches, and fixed noise controls intact for compatible resume. From saved step `s`, initial validation occurs once at `s`; the first new training-loss point is `s+1`. `max_train_steps=B` is this invocation's completed-update budget, so its final absolute step is `s+B` (the example uses `B=1600`). Exact data-loader position restoration is not promised.
+Keep the validation images, captions, source-bound caches, and fixed noise controls intact for compatible resume. From saved step `s`, initial validation occurs once at `s`; the first new training-loss point is `s+1`. `max_train_steps=B` is this invocation's user-selected completed-update budget, so its final absolute step is `s+B`. Use the `output_name` configured in `train.toml` for the package path. Exact data-loader position restoration is not promised.
 
 The full H200 run is a later private-server verification. Local CPU checks of this example do not establish real-model image quality, GPU memory use, or throughput. See the [example command contract](../specs/005-val-loss-configs/contracts/example-cli.md).
 

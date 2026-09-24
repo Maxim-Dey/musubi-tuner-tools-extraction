@@ -31,5 +31,6 @@
 
 ## Notes
 
-- All 16 checks pass. Exact configuration names, values, and CLI options describe the required user-facing artifact, not an implementation design.
+- All 16 checks pass. Required configuration names and CLI options describe the user-facing artifact; numerical training controls are user-selected.
 - Rechecked 2026-09-24 after the user replaced the four manual cache commands with one training command. The new FR-008 and SC-007 have explicit missing, existing, and stale-validation cache acceptance cases; no clarification marker remains.
+- Rechecked after the user clarified that the experiment files must not impose fixed training steps or other numerical controls. The deleted legacy configuration folder remains deleted.

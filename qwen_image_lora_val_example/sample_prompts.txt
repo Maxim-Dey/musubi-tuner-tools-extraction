@@ -1,2 +1,24 @@
-TOK, a gold coin on a plain background. --w 1024 --h 1024 --d 42 --s 30 --l 4.0 --fs 2.2
-TOK, a copper teapot on a table. --w 1024 --h 1024 --d 42 --s 30 --l 4.0 --fs 2.2
+# Простой сюжет — проверяет, появился ли стиль.
+# Смотреть высокий шум: композиция и крупные формы.
+A large gold coin with a "₽" mark is in the center on an empty background. --w 1024 --h 1024 --d 42 --s 20 --l 4.0 --fs 2.2
+A black suitcase is at the left. A silver padlock is at the right. --w 1024 --h 1024 --d 42 --s 20 --l 4.0 --fs 2.2
+
+# Типичный сюжет из датасета в новой композиции — проверяет обучение без копирования.
+# Смотреть высокий и средний шум: композиция, объекты и особенности стиля.
+A metal maze stands on the right. Two red spheres rest on a silver disc to the left of the maze. One red sphere sits on the near rim of the maze. A black plate with a short digital code lies below the disc. --w 1024 --h 1024 --d 42 --s 20 --l 4.0 --fs 2.2
+A stack of red, black, and silver plates occupies the left. A padlock rests across the top plate with the shackle pointing right. A silver coin marked ₽ sits under the shackle. Asterisks *** show on a tiny readout facing the near edge of the bottom plate. --w 1024 --h 1024 --d 42 --s 20 --l 4.0 --fs 2.2
+
+# Новый сюжет, которого нет в датасете — проверяет перенос стиля.
+# Смотреть средний шум: объекты и особенности стиля.
+A copper teapot is in the center. The spout points to the left. A lid with a knob is on top of the teapot. A ceramic cup is on the right of the teapot. --w 1024 --h 1024 --d 42 --s 20 --l 4.0 --fs 2.2
+A sewing machine is in the center. A thread spool is on the left of the machine. The needle is at the front. A strip of cloth lies under the presser foot. --w 1024 --h 1024 --d 42 --s 20 --l 4.0 --fs 2.2
+
+# Сложная сцена с несколькими объектами — проверяет понимание промпта.
+# Смотреть средний шум: объекты и особенности стиля.
+A red wallet occupies mid-frame. A black calculator stands to the left of the wallet. A silver padlock stands to the right. A metal checkmark rests on the wallet. A ₽ coin sits nearer the viewer, ahead of the wallet. --w 1024 --h 1024 --d 42 --s 20 --l 4.0 --fs 2.2
+A silver tablet occupies mid-frame. A round clock stands to the left of the tablet. A black suitcase stands to the right. A red slider rests on the tablet. A metal gear sits nearer the viewer, ahead of the tablet. --w 1024 --h 1024 --d 42 --s 20 --l 4.0 --fs 2.2
+
+# Сцена с мелкими деталями и текстурами — проверяет пережарку и артефакты.
+# Смотреть низкий шум: текстуры, линии и артефакты.
+A silver coin rests on a black plate. Knurling wraps the rim. Engraving and stipple cover the face, with hairline edges and fine type on the inner ring. --w 1024 --h 1024 --d 42 --s 20 --l 4.0 --fs 2.2
+A metal gear leans on a red box. Thin lines outline each tooth. Mesh and seams cover the box lid. Tiny code sits on the hub. --w 1024 --h 1024 --d 42 --s 20 --l 4.0 --fs 2.2

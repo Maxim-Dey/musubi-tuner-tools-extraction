@@ -19,6 +19,6 @@
 
 1. The train TOML anchors the root. Dataset TOML image/cache paths and JSONL image paths, if any, resolve from that root; absolute model paths stay absolute.
 2. Cache preparation fills the three distinct declared cache directories. Stage 1 preflight freezes validation sources and cache bindings before DiT loading.
-3. A fresh 1,600-update run validates at `0, 200, ..., 1600`, with one event at the final step and six loss tags. Package reasons at one absolute step coalesce into one physical package and at most one sample set.
-4. A published package at absolute step `s` can resume from either tree. Initial validation occurs at `s`; 1,600 newly completed updates end at `s+1600`. The data-loader position is not promised to match an uninterrupted run.
+3. A fresh user-selected `B`-update run validates at step 0, configured periodic boundaries, and step `B`, with one event when the final step is also periodic and six loss tags. Package reasons at one absolute step coalesce into one physical package and at most one sample set.
+4. A published package at absolute step `s` can resume from either tree. Initial validation occurs at `s`; `B` newly completed updates end at `s+B`. The data-loader position is not promised to match an uninterrupted run.
 5. After publication at step `X`, current packages with `step >= X-1000` remain within the inclusive retention window; the best is protected even when older. Moving or renaming the entire root changes only the command's root selector, not internal relative paths.

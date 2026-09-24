@@ -12,11 +12,11 @@ This contract specifies the ordinary single-command run for the Stage 4 example 
 | `train.toml: dit`, `vae`, `text_encoder` | Trainer input preflight, model loaders, and automatic cache preparation | User-replaced absolute server files; source DiT remains original BF16. The trainer passes effective VAE and text-encoder paths to cache subprocesses. |
 | `train.toml: dataset_config`, `val_dataset_config` | Trainer preflight and dataset reader | `<root>/train-dataset.toml`; `<root>/val-dataset.toml`. |
 | `train.toml: output_dir`, `logging_dir` | Trainer experiment preflight | `<root>/output`; `<root>/output/tensorboard`. |
-| `train.toml: output_name` | Trainer state publisher | `qwen_image_lora`, a basename for `<output_name>-step-<X>` packages. |
+| `train.toml: output_name` | Trainer state publisher | User-configured basename for `<output_name>-step-<X>` packages. |
 | `train.toml: mixed_precision`, `save_precision` | Trainer parser and experiment preflight | BF16 computation; FP32 sole resumable adapter. BF16 `save_precision` is rejected. |
-| `train.toml: lr_warmup_steps`, training timestep fields | Trainer parser/training loop | Integer `200`; `shift`/`2.2` affect training only, not fixed validation levels. |
-| `train.toml: val_*`, `save_*` | Trainer Stage 2/3 event and package logic | Validation every 200 completed steps, fixed Stage 1 seeds/levels; whole package every 200 and inclusive 1,000-step retention. `save_last_n_steps_state` is absent. |
-| `train.toml: sample_prompts`, `sample_every_n_steps` | Trainer prompt preflight and sampler | `<root>/sample_prompts.txt`; every 200 steps. Remove both keys to disable samples; `sample_prompts=""` is invalid. |
+| `train.toml: lr_warmup_steps`, training timestep fields | Trainer parser/training loop | User-configured integer warmup; `shift`/`2.2` affect training only, not fixed validation levels. |
+| `train.toml: max_train_steps`, `val_*`, `save_*` | Trainer Stage 2/3 event and package logic | User-configured update budget and intervals; validation runs at step 0, periodic boundaries, and final step, without duplicate events. Whole-package retention uses the configured inclusive window. `save_last_n_steps_state` is absent. |
+| `train.toml: sample_prompts`, `sample_every_n_steps` | Trainer prompt preflight and sampler | `<root>/sample_prompts.txt`; cadence comes from the configuration. Remove both keys to disable samples; `sample_prompts=""` is invalid. |
 | `train-dataset.toml` | `config_utils.load_user_config`, blueprint and image/caption readers | One unroled `dataset/train` source and `cache/train`; common 1024 bucket/caption/batch settings. |
 | `val-dataset.toml` | Same readers plus Stage 1 role-aware preflight | Exactly `val_familiar` → `dataset/val_familiar`, `cache/val_familiar`; `val_unfamiliar` → corresponding separate paths. |
 | `sample_prompts.txt` | Qwen `load_prompts` | Two valid `TOK` prompt lines; `TOK` is user-replaceable. |
@@ -44,8 +44,8 @@ On launch, the trainer invokes both existing cache entrypoints for every configu
 Use a real published package directory in one of these commands; `<X>` denotes its absolute completed step:
 
 ```sh
-accelerate launch --mixed_precision bf16 "$REPO/qwen_image_train_network.py" --config_file "$ROOT/train.toml" --resume "$ROOT/output/current_training_states/qwen_image_lora-step-<X>"
-accelerate launch --mixed_precision bf16 "$REPO/qwen_image_train_network.py" --config_file "$ROOT/train.toml" --resume "$ROOT/output/val_training_states/val-loss/qwen_image_lora-step-<X>"
+accelerate launch --mixed_precision bf16 "$REPO/qwen_image_train_network.py" --config_file "$ROOT/train.toml" --resume "$ROOT/output/current_training_states/<output_name>-step-<X>"
+accelerate launch --mixed_precision bf16 "$REPO/qwen_image_train_network.py" --config_file "$ROOT/train.toml" --resume "$ROOT/output/val_training_states/val-loss/<output_name>-step-<X>"
 ```
 
-After moving or renaming the whole experiment folder, change `ROOT` to its new absolute path and rerun commands without editing internal relative paths. A resumed package at step `s` with `max_train_steps=1600` validates once at `s`, logs the first new training loss at `s+1`, and reaches `s+1600` after 1,600 completed updates. Exact data-loader position restoration is not promised. Preserve fixed validation images, captions, caches, and noise controls for compatible resume.
+After moving or renaming the whole experiment folder, change `ROOT` to its new absolute path and rerun commands without editing internal relative paths. Set `<output_name>` to the value in `train.toml`. A resumed package at step `s` with user-selected `max_train_steps=B` validates once at `s`, logs the first new training loss at `s+1`, and reaches `s+B` after `B` completed updates. Exact data-loader position restoration is not promised. Preserve fixed validation images, captions, caches, and noise controls for compatible resume.

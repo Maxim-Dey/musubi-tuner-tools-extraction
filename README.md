@@ -4,7 +4,7 @@
 
 ## Быстрый старт
 
-1. Создайте папку эксперимента из шаблона `qwen_image_lora_val_example`. В [train.toml](qwen_image_lora_val_example/train.toml) настройте модели и обучение, в `train-dataset.toml` и `val-dataset.toml` — изображения, подписи и каталоги кэша.
+1. В папке `qwen_image_lora_val_example` настройте [train.toml](qwen_image_lora_val_example/train.toml): модели, число шагов и другие параметры обучения. В `train-dataset.toml` и `val-dataset.toml` укажите датасеты и каталоги кэша.
 2. Запустите обучение:
 
 ```bash

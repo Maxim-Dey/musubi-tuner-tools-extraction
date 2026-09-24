@@ -93,5 +93,7 @@ Deliver US1 as the MVP physical example and reader gate. Then prove US2's comman
 
 ## Phase 9: Convergence
 
-- [ ] T024 HIGH: Reconcile the shipped `qwen_image_lora_val_example/train.toml`, `train-dataset.toml`, `docs/qwen_image.md`, and Stage 4 example tests with the exact numerical example contract in FR-003, FR-005, FR-010 and SC-004; current rank, step, cadence, batch, and validation-noise values contradict that contract. Preserve the original agreed values unless the user explicitly amends the requirement (contradicts).
-- [ ] T025 HIGH: After T024, replace references to the removed `config_for_qwen_image_lora/train.toml` and `sample_prompts.txt` in `tests/test_qwen_image_config.py` with supported physical example inputs while retaining the original parser, prompt, and exact-value assertions, then rerun the unfiltered Stage 4 CPU suite per FR-012 and Constitution VII (partial).
+The user's decision supersedes earlier task wording that treated numerical values in the supplied experiment files as exact. Historical scheduling tasks still use explicit numbers as CPU test fixtures.
+
+- [X] T024 HIGH: Apply the user's explicit decision that `qwen_image_lora_val_example/` is an editable experiment, not an exact numerical template. Align FR-003, FR-005, FR-010, the guide, and Stage 4 tests so the user chooses training steps, batch size, and other valid numerical controls; keep controlled scheduling values only as test fixtures (user amendment).
+- [X] T025 HIGH: Keep the intentionally removed `config_for_qwen_image_lora/` folder absent. Point its two legacy parser/prompt tests to the supported experiment files, preserve parser precedence and prompt-reader checks, and run the unfiltered Stage 4 CPU suite per FR-012 and Constitution VII (partial).

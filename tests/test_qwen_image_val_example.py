@@ -119,48 +119,21 @@ GENERAL = {
     "batch_size": 1,
     "num_repeats": 1,
 }
-TRAIN_VALUES = {
+REQUIRED_VALUES = {
     "model_version": "original",
     "network_module": "networks.lora_qwen_image",
-    "network_dim": 16,
-    "network_alpha": 16,
     "experiment_dir": ".",
     "dataset_config": "train-dataset.toml",
     "val_dataset_config": "val-dataset.toml",
     "output_dir": "output",
-    "output_name": "qwen_image_lora",
     "mixed_precision": "bf16",
-    "fp8_base": False,
-    "fp8_scaled": False,
-    "fp8_vl": False,
-    "blocks_to_swap": 0,
-    "sdpa": True,
-    "gradient_checkpointing": True,
-    "max_train_steps": 1600,
-    "gradient_accumulation_steps": 1,
-    "seed": 42,
-    "optimizer_type": "adamw8bit",
-    "learning_rate": 5e-5,
-    "lr_scheduler": "constant_with_warmup",
-    "lr_warmup_steps": 200,
-    "max_grad_norm": 1.0,
     "timestep_sampling": "shift",
-    "discrete_flow_shift": 2.2,
     "weighting_scheme": "none",
-    "max_data_loader_n_workers": 0,
-    "persistent_data_loader_workers": False,
-    "val_every_n_steps": 200,
-    "val_seed_noise": 42,
-    "val_level_noise_n": 10,
-    "val_seed_noise_n": 1,
     "save_precision": "fp32",
-    "save_every_n_steps": 200,
-    "save_last_n_steps": 1000,
     "save_state": True,
     "log_with": "tensorboard",
     "logging_dir": "output/tensorboard",
     "sample_prompts": "sample_prompts.txt",
-    "sample_every_n_steps": 200,
     "sample_at_first": False,
 }
 PROMPTS = [
@@ -210,10 +183,12 @@ def test_example_files_and_values(monkeypatch):
     assert {name for name in EXAMPLE_FILES if (EXAMPLE / name).is_file()} == set(EXAMPLE_FILES)
 
     settings = toml.load(EXAMPLE / "train.toml")
-    assert set(settings) == set(TRAIN_VALUES) | {"dit", "vae", "text_encoder"}
-    for key, expected in TRAIN_VALUES.items():
+    for key, expected in REQUIRED_VALUES.items():
         assert settings[key] == expected, key
         assert type(settings[key]) is type(expected), key
+    assert type(settings["max_train_steps"]) is int and settings["max_train_steps"] > 0
+    assert type(settings["lr_warmup_steps"]) is int and settings["lr_warmup_steps"] >= 0
+    assert type(settings["val_every_n_steps"]) is int and settings["val_every_n_steps"] > 0
     for key in ("dit", "vae", "text_encoder"):
         assert isinstance(settings[key], str) and PurePosixPath(settings[key]).is_absolute(), key
     assert "save_last_n_steps_state" not in settings
@@ -222,15 +197,16 @@ def test_example_files_and_values(monkeypatch):
     assert not set(settings) - {action.dest for action in parser._actions}
     monkeypatch.setattr("sys.argv", ["qwen_image_train_network", "--config_file", str(EXAMPLE / "train.toml")])
     args = read_config_from_file(parser.parse_args(), parser)
-    for key, expected in TRAIN_VALUES.items():
+    for key, expected in settings.items():
         assert getattr(args, key) == expected, key
 
     train_dataset = toml.load(EXAMPLE / "train-dataset.toml")
     val_dataset = toml.load(EXAMPLE / "val-dataset.toml")
-    assert train_dataset == {
-        "general": GENERAL,
-        "datasets": [{"image_directory": "dataset/train", "cache_directory": "cache/train"}],
+    assert {key: value for key, value in train_dataset["general"].items() if key != "batch_size"} == {
+        key: value for key, value in GENERAL.items() if key != "batch_size"
     }
+    assert type(train_dataset["general"]["batch_size"]) is int and train_dataset["general"]["batch_size"] > 0
+    assert train_dataset["datasets"] == [{"image_directory": "dataset/train", "cache_directory": "cache/train"}]
     assert val_dataset == {
         "general": GENERAL,
         "datasets": [
@@ -263,6 +239,16 @@ def copied_example(small_experiment):
         vae=str(root / "models/vae.safetensors"),
         text_encoder=str(root / "models/text.safetensors"),
         optimizer_type="AdamW",  # Avoid the server's bitsandbytes dependency in CPU preflight.
+        output_name="qwen_image_lora",
+        timestep_sampling="shift",
+        discrete_flow_shift=2.2,
+        val_seed_noise=42,
+        val_level_noise_n=10,
+        val_seed_noise_n=1,
+        val_every_n_steps=200,
+        save_every_n_steps=200,
+        sample_every_n_steps=200,
+        save_last_n_steps=1000,
     )
     (root / "train.toml").write_text(toml.dumps(settings), encoding="utf-8")
     for name in ("train-dataset.toml", "val-dataset.toml"):
