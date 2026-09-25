@@ -5,8 +5,8 @@ A black suitcase is at the left. A silver padlock is at the right. --w 1024 --h 
 
 # Типичный сюжет из датасета в новой композиции — проверяет обучение без копирования.
 # Смотреть высокий и средний шум: композиция, объекты и особенности стиля.
-A metal maze stands on the right. Two red spheres rest on a silver disc to the left of the maze. One red sphere sits on the near rim of the maze. A black plate with a short digital code lies below the disc. --w 1024 --h 1024 --d 42 --s 20 --l 4.0 --fs 2.2
-A stack of red, black, and silver plates occupies the left. A padlock rests across the top plate with the shackle pointing right. A silver coin marked ₽ sits under the shackle. Asterisks *** show on a tiny readout facing the near edge of the bottom plate. --w 1024 --h 1024 --d 42 --s 20 --l 4.0 --fs 2.2
+A metal maze stands on the right. Two red spheres rest on a silver disc to the left of the maze. One red sphere sits on the near rim of the maze. A black platform with a short digital code lies below the disc. --w 1024 --h 1024 --d 42 --s 20 --l 4.0 --fs 2.2
+A stack of red, black, and silver platforms occupies the left. A padlock rests across the top platform with the shackle pointing right. A silver coin marked ₽ sits under the shackle. Asterisks *** show on a tiny readout facing the near edge of the bottom platform. --w 1024 --h 1024 --d 42 --s 20 --l 4.0 --fs 2.2
 
 # Новый сюжет, которого нет в датасете — проверяет перенос стиля.
 # Смотреть средний шум: объекты и особенности стиля.
@@ -20,5 +20,5 @@ A silver tablet occupies mid-frame. A round clock stands to the left of the tabl
 
 # Сцена с мелкими деталями и текстурами — проверяет пережарку и артефакты.
 # Смотреть низкий шум: текстуры, линии и артефакты.
-A silver coin rests on a black plate. Knurling wraps the rim. Engraving and stipple cover the face, with hairline edges and fine type on the inner ring. --w 1024 --h 1024 --d 42 --s 20 --l 4.0 --fs 2.2
+A silver coin rests on a black platform. Knurling wraps the rim. Engraving and stipple cover the face, with hairline edges and fine type on the inner ring. --w 1024 --h 1024 --d 42 --s 20 --l 4.0 --fs 2.2
 A metal gear leans on a red box. Thin lines outline each tooth. Mesh and seams cover the box lid. Tiny code sits on the hub. --w 1024 --h 1024 --d 42 --s 20 --l 4.0 --fs 2.2

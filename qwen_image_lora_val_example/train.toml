@@ -1,8 +1,8 @@
 # Model weights. Replace these three absolute paths with files on the training server.
 # Use the original BF16 Qwen-Image DiT, not a preconverted FP8 checkpoint.
-dit = "/models/qwen_image_original_bf16_dit.safetensors"
+dit = "/models/qwen_image_2512_bf16.safetensors"
 vae = "/models/qwen_image_vae.safetensors"
-text_encoder = "/models/qwen_2_5_vl_text_encoder.safetensors"
+text_encoder = "/models/qwen_2.5_vl_7b.safetensors"
 model_version = "original"
 
 # Output directory
