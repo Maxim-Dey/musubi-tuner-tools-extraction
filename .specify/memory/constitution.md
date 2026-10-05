@@ -1,21 +1,3 @@
-<!--
-Sync Impact Report
-Version change: unratified scaffold -> 1.0.0 (initial adoption).
-Modified principles: none; scaffold placeholders replaced by:
-  I. Language
-  II. Task Fidelity
-  III. Minimal, Compatible Changes
-  IV. Training Invariants
-  V. Memory and Performance
-  VI. Configuration and Errors
-  VII. Verification and Documentation
-Added sections: Core Principles populated; Local Stage; Development Workflow;
-  Governance populated.
-Removed sections: none; illustrative template comments removed.
-Deferred items / follow-up TODOs: none.
-Temporary review report; remove before committing this constitution.
--->
-
 # Musubi Tuner Constitution
 
 ## Core Principles
@@ -41,8 +23,10 @@ within the task. Agents MUST NOT rewrite a subsystem for a small feature or buil
 systems for hypothetical future needs.
 
 Existing commands, configurations, defaults, and formats MUST be preserved; disabling a new
-feature MUST leave previous behavior unchanged. Incompatible changes require an explicit
-user decision. Support for other models or modes MUST NOT expand without a separate task.
+feature MUST leave previous behavior unchanged. Incompatible changes require explicit
+authorization in the user's task; existing authorization MUST NOT be requested again.
+Without that authorization, the agent MUST choose a compatible implementation. Support for
+other models or modes MUST NOT expand without a separate task.
 
 ### IV. Training Invariants
 
@@ -72,44 +56,86 @@ checks MUST NOT count as passed. Before completion, README MUST be checked again
 requirements and code and updated within scope where needed. Defects MUST NOT be concealed
 by documentation changes or weakened requirements.
 
-## Local Stage
+## Execution Stages
+
+### Local Stage
 
 The agent modifies code and performs available local checks. A full tool run is unavailable
 in the local environment. Training, GPU runs, weight downloads, and packaging are outside
-this stage and MUST NOT be launched by the agent. The tool is subsequently transferred to a
-remote private server for operational verification; the agent MUST NOT perform that transfer
-or verification during the local stage.
+this stage and MUST NOT be launched by the agent during local development. Remote transfer
+and operational verification MUST be performed as a separate stage when included in the
+user's task.
 
-The absence of external runs MUST be recorded once in the stage's final results. Local
-checks MUST NOT be presented as full verification of the real model.
+The absence of external runs MUST be recorded once in the stage's results. Local checks
+MUST NOT be presented as full verification of the real model.
+
+### Remote Verification
+
+When the user's task includes remote verification, the agent MUST proceed to that stage
+after the required local checks pass, without requesting another approval. Within the
+authorized task, the agent MUST transfer the implemented version to the supplied server,
+prepare its environment and configurations, run the required operational checks, and
+record evidence. Runs MUST serve the specified verification scenarios.
+
+The agent MUST preserve user data and keep local and remote versions consistent after
+fixes. Unavailable access, models, data, or infrastructure MUST be reported as concrete
+blockers, not successful verification. Remote checks MUST NOT be added to a local-only task.
 
 ## Development Workflow
 
 The standard sequence is `specify -> plan -> tasks -> analyze -> implement -> converge`.
 
-After converge, the agent MUST present a concrete list of confirmed discrepancies against
-agreed requirements and proposed fixes. Fixes require explicit user approval of that list.
-Approval applies only to that round and does not authorize the next. Finding a defect does
-not expand scope; new feature requirements require a new user instruction and corresponding
-feature document updates. Style comments and unconfirmed hypotheses MUST NOT open another
-correction cycle.
+The user's task authorizes the agent to complete its specified scope autonomously. The
+agent MUST make routine technical decisions, generate required configurations, run the
+prescribed checks, and advance between stages without human review or repeated approval.
+Unspecified implementation details MUST be resolved from the requirements and code, with
+material assumptions recorded. The agent MUST NOT invent unavailable external facts.
 
-After initial implementation, at most two `fix -> verify` rounds are allowed, each with its
-own explicit approval. After the second round, the cycle MUST stop; further work requires a
-new user instruction. Remaining confirmed discrepancies MUST be reported without declaring
-the stage complete.
+After analyze or converge, the agent MUST record a concrete list of confirmed discrepancies,
+supporting evidence, proposed fixes, and verification criteria. Within the correction limit
+below, it MUST correct those discrepancies autonomously in a separate editing or
+implementation step. Analyze remains read-only; converge remains append-only for tasks.
+Their findings MUST NOT be treated as a request for human approval.
+
+After initial implementation, at most two autonomous `fix -> verify` rounds are allowed
+per feature. A round is a correction pass over a recorded list of confirmed discrepancies
+from post-implementation checks, including converge and remote verification. The coordinator
+MUST record the round count and results; changing commands, agents, or verification stages
+MUST NOT reset the count. A round MUST address confirmed in-scope defects; style comments,
+unconfirmed hypotheses, and additional functionality MUST NOT open a correction cycle.
+
+The agent MUST stop correction passes as soon as required checks pass and no confirmed
+in-scope discrepancies remain. If discrepancies remain after two rounds, it MUST stop
+further corrections and report the remaining defects, evidence, and incomplete status.
+The agent MUST NOT extend the limit autonomously or weaken requirements to claim success.
+Neither correction round requires separate user approval.
+
+When multi-agent work is requested, the coordinator MUST delegate independent work, prevent
+concurrent edits to the same file, integrate results, and arrange independent verification.
+Quality checks and checklists MUST be assessed against evidence by the agents; human review
+is not a required stage. Failed checks MUST be resolved, not marked complete to bypass them.
+
+If progress requires unavailable access, information, or an action outside the authorized
+scope, the agent MUST report the concrete blocker and remaining work, and continue any
+independent authorized work. It MUST NOT declare blocked or unverified work complete.
 
 The local stage is complete only when its requirements are met, prescribed local checks
 have passed, the README review is complete, and no confirmed discrepancies remain within
-the agreed scope. Server verification remains a separate stage.
+the agreed scope. When remote verification is required, the whole task is complete only
+after its required remote checks also pass.
 
 ## Governance
 
-This instruction authorizes initial adoption. Subsequent amendments require explicit user
-permission. Feature documents MUST NOT silently override or weaken this constitution. On
-conflict, the agent MUST report it and request the user's decision instead of treating a
-feature document as amendment permission. Compliance reviews MUST check feature documents
-and implementation against this constitution.
+This amendment is explicitly authorized by the user. Future amendments require explicit
+user authorization; authorization already provided in the current task MUST NOT be
+requested again. Autonomous implementation does not authorize changing the task's goals or
+weakening this constitution. Feature documents MUST NOT silently override it.
+
+Compliance reviews MUST check feature documents and implementation against this
+constitution. Conflicts within the authorized scope MUST be resolved autonomously. If a
+conflict requires an unauthorized amendment or scope change, the agent MUST report that
+specific blocker and continue independent authorized work. Routine decisions, stage
+transitions, and confirmed-defect corrections MUST NOT be escalated for user approval.
 
 Versions follow semantic versioning: MAJOR for incompatible principle or governance removals
 or redefinitions; MINOR for new principles or sections or materially expanded guidance;
@@ -117,4 +143,4 @@ PATCH for clarifications and wording fixes without semantic changes. Dates MUST 
 `YYYY-MM-DD`: Ratified retains the original adoption date; Last Amended records the date
 of the latest change.
 
-**Version**: 1.0.0 | **Ratified**: 2026-09-19 | **Last Amended**: 2026-09-19
+**Version**: 2.0.0 | **Ratified**: 2026-09-19 | **Last Amended**: 2026-10-05

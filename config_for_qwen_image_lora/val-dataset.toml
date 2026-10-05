@@ -1,0 +1,12 @@
+[general]
+resolution = [1024, 1024]
+enable_bucket = true
+bucket_no_upscale = true
+caption_extension = ".txt"
+batch_size = 1
+num_repeats = 1
+
+[[datasets]]
+role = "val"
+image_directory = "dataset/val"
+cache_directory = "cache/val"
