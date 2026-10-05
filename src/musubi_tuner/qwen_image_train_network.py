@@ -52,6 +52,12 @@ class QwenImageNetworkTrainer(NetworkTrainer):
         if args.max_train_epochs is not None:
             steps = args.max_train_epochs * math.ceil(len(dataset) / processes / args.gradient_accumulation_steps)
         validate_scheduler_args(args, steps * processes)
+        if getattr(args, "val_dataset_config", None):
+            from musubi_tuner.training.validation import preserve_rng_state
+            from musubi_tuner.training.validation_inputs import prepare_validation_inputs
+
+            with preserve_rng_state():
+                self.validation_inputs = prepare_validation_inputs(args, dataset)
 
     # region model specific
 
@@ -304,7 +310,7 @@ class QwenImageNetworkTrainer(NetworkTrainer):
         # print(f"vl_embed shape: {vl_embed.shape}, vl_mask shape: {vl_mask.shape if vl_mask is not None else None}")
 
         # ensure the hidden state will require grad
-        if args.gradient_checkpointing:
+        if args.gradient_checkpointing and torch.is_grad_enabled():
             noisy_model_input.requires_grad_(True)
             vl_embed.requires_grad_(True)
 
@@ -364,6 +370,9 @@ def qwen_image_setup_parser(parser: argparse.ArgumentParser) -> argparse.Argumen
 
 def validate_training_args(args):
     """Validate original-image consumers before any model or tracker is initialized."""
+    from musubi_tuner.training.experiment_config import configure_training_args
+
+    configure_training_args(args)
     source = getattr(args, "_config_source", "CLI")
 
     def fail(key, reason):
@@ -603,7 +612,8 @@ def validate_training_args(args):
         if not value and key == "network_weights":
             continue
         if not value or not Path(value).is_file():
-            fail(key, f"missing input file {value!r}; supply an existing path relative to process CWD")
+            path_root = "the training TOML directory" if getattr(args, "experiment_mode", False) else "process CWD"
+            fail(key, f"missing input file {value!r}; supply an existing absolute path or a path relative to {path_root}")
     for value in args.base_weights or []:
         if not Path(value).is_file():
             fail("base_weights", f"missing input file {value!r}")
@@ -611,6 +621,8 @@ def validate_training_args(args):
         fail("resume", f"missing Accelerate state directory {args.resume!r}")
     if not args.output_dir or not args.output_name:
         fail("output_dir/output_name", "both are required; output directories may be new")
+    if args.experiment_mode and (args.output_name in (".", "..") or any(c in args.output_name for c in "/\\:")):
+        fail("output_name", "must be a file name without directory components; use a simple experiment name")
     output = Path(args.output_dir)
     for path in (output, *output.parents):
         if path.exists() and not path.is_dir():

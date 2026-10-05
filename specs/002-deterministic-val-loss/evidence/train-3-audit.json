@@ -1,0 +1,103 @@
+{
+  "status": "passed",
+  "run": "config_for_qwen_image_lora/acceptance/output-resume/tensorboard/qwen_image_val_acceptance_resume20261005163322827734/network_train",
+  "validation": {
+    "val_loss_mean": [
+      {
+        "step": 0,
+        "value": 0.14263130724430084
+      },
+      {
+        "step": 2,
+        "value": 0.1423138678073883
+      },
+      {
+        "step": 3,
+        "value": 0.14191530644893646
+      }
+    ],
+    "val_loss_low_noise": [
+      {
+        "step": 0,
+        "value": 0.13042590022087097
+      },
+      {
+        "step": 2,
+        "value": 0.13013386726379395
+      },
+      {
+        "step": 3,
+        "value": 0.12941181659698486
+      }
+    ],
+    "val_loss_high_noise": [
+      {
+        "step": 0,
+        "value": 0.1548367142677307
+      },
+      {
+        "step": 2,
+        "value": 0.15449386835098267
+      },
+      {
+        "step": 3,
+        "value": 0.15441878139972687
+      }
+    ]
+  },
+  "train_steps": [
+    1,
+    2,
+    3
+  ],
+  "inventory": {
+    "2": {
+      "files": [],
+      "samples": [
+        "qwen_image_val_acceptance-step2/samples/qwen_image_val_acceptance_000002_00_20261005163506_42_000.png"
+      ]
+    },
+    "3": {
+      "files": [
+        "checkpoint_manifest.json",
+        "model.safetensors",
+        "optimizer.bin",
+        "random_states_0.pkl",
+        "scheduler.bin",
+        "trainer_state.json"
+      ],
+      "adapter_tensor_count": 2520,
+      "manifest": {
+        "adapter_identity": "681de1462f13288703f52b3cc850791c51add9711daf294b3ba3e68b816a457d",
+        "files": {
+          "model.safetensors": {
+            "sha256": "47326f162000823741ca12ebe54d43eb81f82a9a945f5ce6c77b205a2a1469c3",
+            "size": 1179978920
+          },
+          "optimizer.bin": {
+            "sha256": "6d00cc324d2da7bdd0b002e0f6ffda3fe94d71e5298495e31a0704629b6d73a2",
+            "size": 598628493
+          },
+          "random_states_0.pkl": {
+            "sha256": "9955f692a185e5d0b7fd0bc10ab7aaf13350ec8254f25c764064be9e0a38fcd6",
+            "size": 14757
+          },
+          "scheduler.bin": {
+            "sha256": "9d00d91fe09b75df99683c259458ec7350360912be814c7676632fa58db0720f",
+            "size": 1401
+          },
+          "trainer_state.json": {
+            "sha256": "e7902bfea195991452cd370fd8af581efaac50c46861a0be1e858c79b454506b",
+            "size": 1624
+          }
+        },
+        "optimizer_global_step": 3,
+        "output_name": "qwen_image_val_acceptance",
+        "process_count": 1,
+        "save_dtype": "torch.float32",
+        "schema": 1,
+        "with_state": true
+      }
+    }
+  }
+}

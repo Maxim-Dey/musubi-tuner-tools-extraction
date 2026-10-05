@@ -75,7 +75,7 @@ def get_sigmas(noise_scheduler, timesteps, device, n_dim=4, dtype=torch.float32)
     return sigma
 
 
-def compute_loss_weighting_for_sd3(weighting_scheme: str, noise_scheduler, timesteps, device, dtype):
+def compute_loss_weighting_for_sd3(weighting_scheme: str, noise_scheduler, timesteps, device, dtype, *, fixed_sigmas=None):
     """Computes loss weighting scheme for SD3 training.
 
     Courtesy: This was contributed by Rafie Walker in https://github.com/huggingface/diffusers/pull/8528.
@@ -83,7 +83,11 @@ def compute_loss_weighting_for_sd3(weighting_scheme: str, noise_scheduler, times
     SD3 paper reference: https://arxiv.org/abs/2403.03206v1.
     """
     if weighting_scheme == "sigma_sqrt" or weighting_scheme == "cosmap":
-        sigmas = get_sigmas(noise_scheduler, timesteps, device, n_dim=5, dtype=dtype)
+        if fixed_sigmas is None:
+            sigmas = get_sigmas(noise_scheduler, timesteps, device, n_dim=5, dtype=dtype)
+        else:
+            # Validation uses its actual final mixing coefficient, never a shifted/rounded scheduler lookup.
+            sigmas = fixed_sigmas.to(device=device, dtype=torch.float32).reshape(-1, 1, 1, 1, 1)
         if weighting_scheme == "sigma_sqrt":
             weighting = (sigmas**-2.0).float()
         else:

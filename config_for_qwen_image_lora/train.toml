@@ -1,3 +1,6 @@
+# Relative paths resolve from this file; dataset paths resolve from their own TOML.
+experiment_mode = true
+
 # Model weights. Replace these three absolute paths with files on the training server.
 # Use the original BF16 Qwen-Image DiT, not a preconverted FP8 checkpoint.
 dit = "/workspace/models/qwen_image_2512_bf16.safetensors"

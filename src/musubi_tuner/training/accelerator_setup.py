@@ -50,7 +50,12 @@ def prepare_accelerator(args: argparse.Namespace) -> Accelerator:
     """
     DeepSpeed is not supported in this script currently.
     """
-    if args.logging_dir is None:
+    training_state = getattr(args, "_training_state", None)
+    if training_state is not None:
+        from musubi_tuner.training.experiment_state import resolved_project_dir
+
+        logging_dir = resolved_project_dir(training_state)
+    elif args.logging_dir is None:
         logging_dir = None
     else:
         log_prefix = "" if args.log_prefix is None else args.log_prefix

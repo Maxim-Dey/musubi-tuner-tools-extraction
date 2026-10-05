@@ -18,6 +18,8 @@ import musubi_tuner.cache_text_encoder_outputs as cache_text_encoder_outputs
 import logging
 
 from musubi_tuner.qwen_image import qwen_image_utils
+from musubi_tuner.training.experiment_config import add_cache_arguments, configure_cache_args
+from musubi_tuner.training.validation_inputs import prepare_cache_batch, validate_cache_dataset
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -48,7 +50,7 @@ def main():
     parser = cache_text_encoder_outputs.setup_parser_common()
     parser = qwen_image_setup_parser(parser)
 
-    args = parser.parse_args()
+    args = configure_cache_args(parser.parse_args())
     config_utils.validate_cache_args(args)
     qwen_image_utils.resolve_model_version_args(args)
     if args.model_version != "original":
@@ -65,6 +67,7 @@ def main():
     train_dataset_group = config_utils.generate_dataset_group_by_blueprint(blueprint.dataset_group)
 
     config_utils.validate_dataset_sources(train_dataset_group, args.dataset_config)
+    validate_cache_dataset(train_dataset_group, args)
     datasets = train_dataset_group.datasets
 
     # define accelerator for fp8 inference
@@ -81,12 +84,15 @@ def main():
     tokenizer, text_encoder = qwen_image_utils.load_qwen2_5_vl(
         ckpt_path=args.text_encoder, dtype=vl_dtype, device=device, disable_mmap=True
     )
+    if args.validation:
+        text_encoder.eval()
 
     # Encode with Qwen2.5-VL
     logger.info("Encoding with Qwen2.5-VL")
 
     def encode_for_text_encoder(batch: list[ItemInfo]):
         nonlocal tokenizer, text_encoder, device, accelerator, args
+        prepare_cache_batch(batch, datasets, args)
         encode_and_save_batch(tokenizer, text_encoder, batch, device, accelerator)
 
     cache_text_encoder_outputs.process_text_encoder_batches(
@@ -107,6 +113,7 @@ def main():
 
 
 def qwen_image_setup_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    add_cache_arguments(parser)
     parser.add_argument("--text_encoder", type=str, default=None, required=True, help="Text Encoder (Qwen2.5-VL) checkpoint path")
     parser.add_argument("--fp8_vl", action="store_true", help="use fp8 for Text Encoder model")
     qwen_image_utils.add_model_version_args(parser)

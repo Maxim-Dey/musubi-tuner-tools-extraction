@@ -35,6 +35,9 @@ def _int_or_float(value):
 
 
 def _add_general_args(parser: argparse.ArgumentParser) -> None:
+    from musubi_tuner.training.experiment_config import add_training_arguments
+
+    add_training_arguments(parser)
     parser.add_argument(
         "--config_file",
         type=str,
@@ -815,7 +818,9 @@ def read_config_from_file(args: argparse.Namespace, parser: argparse.ArgumentPar
             validate_original_selection(action.dest, value, f"CLI {option_string}")
     validate_parser_values(args, parser, source)
     args._config_source = source
-    return args
+    from musubi_tuner.training.experiment_config import configure_training_args
+
+    return configure_training_args(args)
 
 
 SUPPORTED_NETWORK_MODULES = {

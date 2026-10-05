@@ -25,7 +25,7 @@ prompt = "TOK, evening"
 width = 768
 ```
 
-PNG grids appear in `<output_dir>/sample`, using output name, step/epoch, prompt index, timestamp and optional seed. An active wandb tracker receives the PNGs. Normal sampling uses eval/no-grad, switches block swapping for inference and back, restores the previous training mode and torch RNG state, and does not update training weights or optimizer/scheduler state. Exceptional-exit restoration is not guaranteed by the existing implementation.
+With `experiment_mode=true`, PNG grids appear in `<output_dir>/<output_name>-step<actual_optimizer_step>/samples/`; legacy mode uses `<output_dir>/sample`. Filenames retain output name, step/epoch, prompt index, timestamp and optional seed. Different sample/checkpoint intervals do not relabel a sample: a samples-only step directory is not resumable. New-layout retention preserves samples. An active wandb tracker receives the PNGs. Normal sampling uses eval/no-grad, switches block swapping for inference and back, restores the previous training mode and torch RNG state, and does not update training weights or optimizer/scheduler state. Exceptional-exit restoration is not guaranteed by the existing sampling implementation; deterministic loss evaluation has its own stronger restoration boundary.
 
 See [shipped prompts](../config_for_qwen_image_lora/sample_prompts.txt) and [Qwen training](qwen_image.md).
 

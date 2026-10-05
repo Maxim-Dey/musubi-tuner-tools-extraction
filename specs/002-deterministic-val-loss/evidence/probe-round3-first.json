@@ -1,0 +1,224 @@
+{
+  "status": "failed",
+  "loss_tolerance": {
+    "rtol": 0.0001,
+    "atol": 1e-05
+  },
+  "paired_tolerance": {
+    "rtol": 0.0,
+    "atol": 0.0
+  },
+  "torch": "2.8.0+cu128",
+  "accelerate": "1.6.0",
+  "device": "cuda",
+  "device_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "mixed_precision": "bf16",
+  "gradient_accumulation_steps": 2,
+  "network_dropout": 0.05,
+  "gradient_checkpointing": true,
+  "validation_fingerprint": "8e77dd036ee857a60a3c533952576fa4b10ccb1ffc3b1175d6437a5b6366c552",
+  "image_count": 1,
+  "level_count": 10,
+  "realization_count": 2,
+  "batch_latent_sha256": [
+    "b505cb69a1353dabbc2f99395b120bea608040bb04a22514188a3515bc9663aa",
+    "fde37e729ef068b912fd0dd8967daaccd66585972057fbe03815f57053a53398"
+  ],
+  "completed_updates": {
+    "warmup": 1,
+    "control": 1,
+    "measured": 1
+  },
+  "microbatch_sync": {
+    "warmup": [
+      false,
+      true
+    ],
+    "control": [
+      false,
+      true
+    ],
+    "measured": [
+      false,
+      true
+    ]
+  },
+  "repeatability": {
+    "first": {
+      "val_loss_mean": 0.14191530235111713,
+      "val_loss_low_noise": 0.12941182255744935,
+      "val_loss_high_noise": 0.15441878214478494
+    },
+    "second": {
+      "val_loss_mean": 0.14191530235111713,
+      "val_loss_low_noise": 0.12941182255744935,
+      "val_loss_high_noise": 0.15441878214478494
+    },
+    "forward_count_each": 20,
+    "noise": [
+      {
+        "seed": 575222206595298013,
+        "noise_sha256": "84046387257f3fc568fd2f12f615f600d56cf6276c3e8ba0e575152b07db3391"
+      },
+      {
+        "seed": 13206710538098053,
+        "noise_sha256": "9c6a0ceab1d5e60a818eae07623770c6ef0dae24a7b80ba129e791fbc7bcb1ce"
+      },
+      {
+        "seed": 6602402143018060575,
+        "noise_sha256": "60b0044a12014c63835f5fe74c354e9897ab46fab02caf99b5794fdf7aade0f5"
+      },
+      {
+        "seed": 3333983518559222042,
+        "noise_sha256": "4fea73378c9ed82633b020da1ec43b8f53236f59f14d0dccda6357d728842b2f"
+      },
+      {
+        "seed": 4568545883759029588,
+        "noise_sha256": "d3c52e1d0ad9e239e7c8a281ccdee978f71bf6bf05b04d45bcf71f04d1b171c5"
+      },
+      {
+        "seed": 7994261221994678566,
+        "noise_sha256": "85307d5a0109e8e17fc9c794f8095bfac6a32360a7dc3a6e4d349b5a344022f0"
+      },
+      {
+        "seed": 2272218378987839263,
+        "noise_sha256": "d4ba4ad19fb1ffdd2d5cb9ffb540eb29c435c5e7cb800633ad1f08a4fefe580a"
+      },
+      {
+        "seed": 4236965073525594803,
+        "noise_sha256": "6d17c4cd0f76fa831990bd65cb6665636fd8d0973dac18ca738e5e9f3aac3cf7"
+      },
+      {
+        "seed": 8570854686643465172,
+        "noise_sha256": "fe478bf8563c93cc9bbb321e2fb0fe3a881b0625166a9bf3ec8434200491eae6"
+      },
+      {
+        "seed": 3111419435264069542,
+        "noise_sha256": "8d81f42bf39d103cb47f80cfcd48de2dc6859747a1cda2921484f6293a164c9e"
+      },
+      {
+        "seed": 6677776247899144435,
+        "noise_sha256": "67fc6ea58e6b7d7a562a2c694ecc7d0a31ce4aa749488859d36d4ed8016e582e"
+      },
+      {
+        "seed": 4151680705020109859,
+        "noise_sha256": "88034204ebb689c57e6396c048083716dfa17aeec8111e926bb8f9a5f3398b2a"
+      },
+      {
+        "seed": 5700830123890113839,
+        "noise_sha256": "6f77dfbb16f27ba53de06d06faba5a9d41edfea54b7157714e68b8e8661c1ccc"
+      },
+      {
+        "seed": 414783482798784472,
+        "noise_sha256": "15d010548374f74e222f0eeb0a83cd5296dab9331ca5b9c127f44a0ed7f945ac"
+      },
+      {
+        "seed": 6419790541448567201,
+        "noise_sha256": "5869547312aa3fbb221edfeeab3d4bad673cfb69725cdee2a81926ab1bca9bc0"
+      },
+      {
+        "seed": 7213995487333781663,
+        "noise_sha256": "b349ba2f0f11d76a65602690c5e01d9e16255fe5efe06255c96affca5f3ee8b4"
+      },
+      {
+        "seed": 1989692758171894161,
+        "noise_sha256": "b818d73d83820ca5904bc0af34c313eaf8735a47a3c7bdb56bfdf158a4702b94"
+      },
+      {
+        "seed": 2720942404886231316,
+        "noise_sha256": "f4257be07330de551d50403d80c7f2ca5d4a09615180a45cbd539fec59a816ca"
+      },
+      {
+        "seed": 8079157709278771485,
+        "noise_sha256": "14013724298d11806691cbec83177bab05c4b7182d26d725ebd6c8fab590069e"
+      },
+      {
+        "seed": 8142212028531675301,
+        "noise_sha256": "20ae09dca4a68cb08e606b5b2827bfed7d93472a2b12c5556c5c2fab46aefb70"
+      }
+    ],
+    "second_noise": [
+      {
+        "seed": 575222206595298013,
+        "noise_sha256": "84046387257f3fc568fd2f12f615f600d56cf6276c3e8ba0e575152b07db3391"
+      },
+      {
+        "seed": 13206710538098053,
+        "noise_sha256": "9c6a0ceab1d5e60a818eae07623770c6ef0dae24a7b80ba129e791fbc7bcb1ce"
+      },
+      {
+        "seed": 6602402143018060575,
+        "noise_sha256": "60b0044a12014c63835f5fe74c354e9897ab46fab02caf99b5794fdf7aade0f5"
+      },
+      {
+        "seed": 3333983518559222042,
+        "noise_sha256": "4fea73378c9ed82633b020da1ec43b8f53236f59f14d0dccda6357d728842b2f"
+      },
+      {
+        "seed": 4568545883759029588,
+        "noise_sha256": "d3c52e1d0ad9e239e7c8a281ccdee978f71bf6bf05b04d45bcf71f04d1b171c5"
+      },
+      {
+        "seed": 7994261221994678566,
+        "noise_sha256": "85307d5a0109e8e17fc9c794f8095bfac6a32360a7dc3a6e4d349b5a344022f0"
+      },
+      {
+        "seed": 2272218378987839263,
+        "noise_sha256": "d4ba4ad19fb1ffdd2d5cb9ffb540eb29c435c5e7cb800633ad1f08a4fefe580a"
+      },
+      {
+        "seed": 4236965073525594803,
+        "noise_sha256": "6d17c4cd0f76fa831990bd65cb6665636fd8d0973dac18ca738e5e9f3aac3cf7"
+      },
+      {
+        "seed": 8570854686643465172,
+        "noise_sha256": "fe478bf8563c93cc9bbb321e2fb0fe3a881b0625166a9bf3ec8434200491eae6"
+      },
+      {
+        "seed": 3111419435264069542,
+        "noise_sha256": "8d81f42bf39d103cb47f80cfcd48de2dc6859747a1cda2921484f6293a164c9e"
+      },
+      {
+        "seed": 6677776247899144435,
+        "noise_sha256": "67fc6ea58e6b7d7a562a2c694ecc7d0a31ce4aa749488859d36d4ed8016e582e"
+      },
+      {
+        "seed": 4151680705020109859,
+        "noise_sha256": "88034204ebb689c57e6396c048083716dfa17aeec8111e926bb8f9a5f3398b2a"
+      },
+      {
+        "seed": 5700830123890113839,
+        "noise_sha256": "6f77dfbb16f27ba53de06d06faba5a9d41edfea54b7157714e68b8e8661c1ccc"
+      },
+      {
+        "seed": 414783482798784472,
+        "noise_sha256": "15d010548374f74e222f0eeb0a83cd5296dab9331ca5b9c127f44a0ed7f945ac"
+      },
+      {
+        "seed": 6419790541448567201,
+        "noise_sha256": "5869547312aa3fbb221edfeeab3d4bad673cfb69725cdee2a81926ab1bca9bc0"
+      },
+      {
+        "seed": 7213995487333781663,
+        "noise_sha256": "b349ba2f0f11d76a65602690c5e01d9e16255fe5efe06255c96affca5f3ee8b4"
+      },
+      {
+        "seed": 1989692758171894161,
+        "noise_sha256": "b818d73d83820ca5904bc0af34c313eaf8735a47a3c7bdb56bfdf158a4702b94"
+      },
+      {
+        "seed": 2720942404886231316,
+        "noise_sha256": "f4257be07330de551d50403d80c7f2ca5d4a09615180a45cbd539fec59a816ca"
+      },
+      {
+        "seed": 8079157709278771485,
+        "noise_sha256": "14013724298d11806691cbec83177bab05c4b7182d26d725ebd6c8fab590069e"
+      },
+      {
+        "seed": 8142212028531675301,
+        "noise_sha256": "20ae09dca4a68cb08e606b5b2827bfed7d93472a2b12c5556c5c2fab46aefb70"
+      }
+    ]
+  },
+  "error": "AssertionError: train_gradients[0]: paired tensors differ"
+}

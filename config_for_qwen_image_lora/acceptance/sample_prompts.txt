@@ -1,0 +1,2 @@
+# Separate short acceptance sample; the parent prompt file is untouched.
+A large gold coin with a "₽" mark is in the center on an empty background. --w 256 --h 256 --d 42 --s 2 --l 4.0 --fs 2.2

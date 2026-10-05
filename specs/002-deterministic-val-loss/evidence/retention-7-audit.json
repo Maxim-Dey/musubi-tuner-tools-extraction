@@ -1,0 +1,202 @@
+{
+  "status": "passed",
+  "run": "config_for_qwen_image_lora/acceptance/output-periodic/tensorboard/qwen_image_val_acceptance_periodic20261005165156183871/network_train",
+  "validation": {
+    "val_loss_mean": [
+      {
+        "step": 0,
+        "value": 0.12557891011238098
+      },
+      {
+        "step": 2,
+        "value": 0.12591132521629333
+      },
+      {
+        "step": 4,
+        "value": 0.12585832178592682
+      },
+      {
+        "step": 6,
+        "value": 0.1244942843914032
+      },
+      {
+        "step": 7,
+        "value": 0.1240130215883255
+      }
+    ],
+    "val_loss_low_noise": [
+      {
+        "step": 0,
+        "value": 0.10250335931777954
+      },
+      {
+        "step": 2,
+        "value": 0.10206548124551773
+      },
+      {
+        "step": 4,
+        "value": 0.10210729390382767
+      },
+      {
+        "step": 6,
+        "value": 0.10022623091936111
+      },
+      {
+        "step": 7,
+        "value": 0.09978511929512024
+      }
+    ],
+    "val_loss_high_noise": [
+      {
+        "step": 0,
+        "value": 0.14865444600582123
+      },
+      {
+        "step": 2,
+        "value": 0.14975716173648834
+      },
+      {
+        "step": 4,
+        "value": 0.14960935711860657
+      },
+      {
+        "step": 6,
+        "value": 0.14876234531402588
+      },
+      {
+        "step": 7,
+        "value": 0.14824092388153076
+      }
+    ]
+  },
+  "train_steps": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "inventory": {
+    "2": {
+      "files": [],
+      "samples": [
+        "qwen_image_val_acceptance-step2/samples/qwen_image_val_acceptance_000002_00_20261005165241_42_000.png"
+      ]
+    },
+    "4": {
+      "files": [
+        "checkpoint_manifest.json",
+        "model.safetensors"
+      ],
+      "adapter_tensor_count": 2520,
+      "manifest": {
+        "adapter_identity": "717247fa40fda0397816310918b0c7f6cae9be8d71bd468d254a7546afc455ba",
+        "files": {
+          "model.safetensors": {
+            "sha256": "62b4d63b208ddc89b870ad42cc3f5250bb0bb15b72ff45fc69c24da93ebd6d3a",
+            "size": 1179978912
+          }
+        },
+        "optimizer_global_step": 4,
+        "output_name": "qwen_image_val_acceptance",
+        "process_count": 1,
+        "save_dtype": "torch.float32",
+        "schema": 1,
+        "with_state": false
+      },
+      "samples": [
+        "qwen_image_val_acceptance-step4/samples/qwen_image_val_acceptance_000004_00_20261005165315_42_000.png",
+        "qwen_image_val_acceptance-step4/samples/qwen_image_val_acceptance_e000000_00_20261005171235_42_000.png"
+      ]
+    },
+    "6": {
+      "files": [
+        "checkpoint_manifest.json",
+        "model.safetensors",
+        "optimizer.bin",
+        "random_states_0.pkl",
+        "scheduler.bin",
+        "trainer_state.json"
+      ],
+      "adapter_tensor_count": 2520,
+      "manifest": {
+        "adapter_identity": "98a1a05c46434a972c2a07b38b690056e7ca21f3e813500248bdc3d9f15706f9",
+        "files": {
+          "model.safetensors": {
+            "sha256": "39ed41627a277785041c3d5c98b7927035aac6484201a6c1ecaed494f7237a2b",
+            "size": 1179978920
+          },
+          "optimizer.bin": {
+            "sha256": "46e4dd9ac626392a6be17735d4a5e3d2d6ed04455d58a5317706734293382710",
+            "size": 602991755
+          },
+          "random_states_0.pkl": {
+            "sha256": "0f3a9cd17cbcd7e6c0ef02f964cb84c7fbdd5de8c68429f16f3281973b54b105",
+            "size": 14757
+          },
+          "scheduler.bin": {
+            "sha256": "50f0e9b67b12284b0772f090bd91df9b4af4f8fac6d1249b50ba5dc8fba6908c",
+            "size": 1401
+          },
+          "trainer_state.json": {
+            "sha256": "b914bd56623c2bd533403524145e5f62743d652ec216de523ca3c2adbe3a8d4b",
+            "size": 1627
+          }
+        },
+        "optimizer_global_step": 6,
+        "output_name": "qwen_image_val_acceptance",
+        "process_count": 1,
+        "save_dtype": "torch.float32",
+        "schema": 1,
+        "with_state": true
+      },
+      "samples": [
+        "qwen_image_val_acceptance-step6/samples/qwen_image_val_acceptance_000006_00_20261005171243_42_000.png"
+      ]
+    },
+    "7": {
+      "files": [
+        "checkpoint_manifest.json",
+        "model.safetensors",
+        "optimizer.bin",
+        "random_states_0.pkl",
+        "scheduler.bin",
+        "trainer_state.json"
+      ],
+      "adapter_tensor_count": 2520,
+      "manifest": {
+        "adapter_identity": "61716e5302ab6ea2d0b38c90e39efabfa5ed10b72b55a0037371b392b34c2d60",
+        "files": {
+          "model.safetensors": {
+            "sha256": "e838da79baaed5ee2f586e9314d3da0e9a6cd663742ab033eb58674d01267bdf",
+            "size": 1179978920
+          },
+          "optimizer.bin": {
+            "sha256": "72f577ab9ff8d24c11f53c6d514a07461bf03116e005a1e159f7e82919eef5fd",
+            "size": 602991755
+          },
+          "random_states_0.pkl": {
+            "sha256": "72fce938cfeec43e1dcc3a5310b59da1ab041134bb666b12de74037220a405c7",
+            "size": 14757
+          },
+          "scheduler.bin": {
+            "sha256": "3878028a9351b18518101ba134258adbbe404f374e10545e060cfa4e3ecc9ed7",
+            "size": 1401
+          },
+          "trainer_state.json": {
+            "sha256": "997d88107699b9685e75c0312d052131e412a5a6db1ec248407cadfd7399b41b",
+            "size": 1627
+          }
+        },
+        "optimizer_global_step": 7,
+        "output_name": "qwen_image_val_acceptance",
+        "process_count": 1,
+        "save_dtype": "torch.float32",
+        "schema": 1,
+        "with_state": true
+      }
+    }
+  }
+}

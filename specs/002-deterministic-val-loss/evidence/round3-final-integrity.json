@@ -1,0 +1,14 @@
+{
+  "status": "passed",
+  "source_images_and_captions_unchanged": 127,
+  "cache_files_unchanged": 6,
+  "execution_files_unchanged": 89,
+  "execution_manifest_sha256": "ae35cfa9c5821cf1104ece7cdfc4590ad54da9811ee7a494083bd11b5b9d2034",
+  "checkpoint3_adapter_sha256": "47326f162000823741ca12ebe54d43eb81f82a9a945f5ce6c77b205a2a1469c3",
+  "validation_fingerprint": "8e77dd036ee857a60a3c533952576fa4b10ccb1ffc3b1175d6437a5b6366c552",
+  "protected_sha256": {
+    ".specify/memory/constitution.md": "142c40f1d23875e13a91c26271abd5e4035c9b04366548e9ccd0a48512fec626",
+    "config_for_qwen_image_lora/sample_prompts.txt": "ebc005d4eeb644d57bd716cd9459feeefcc253975ca30730114f4a7b5dc13711"
+  },
+  "gpu_compute_processes": ""
+}

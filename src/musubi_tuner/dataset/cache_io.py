@@ -22,11 +22,13 @@ def save_latent_cache_qwen_image(item_info: ItemInfo, latent: torch.Tensor):
     """Original Qwen image cache: [C,1,H,W], unchanged serialized format."""
     if latent.ndim != 4 or latent.shape[1] != 1:
         raise ValueError(f"{item_info.item_key}: latent must have shape [C,1,H,W]; cache an original image")
+    if getattr(item_info, "cache_metadata", None) and not torch.isfinite(latent.float()).all().item():
+        raise ValueError(f"{item_info.item_key}: invalid nonfinite latent; correct the encoder before creating fixed caches")
     _, F, H, W = latent.shape
     dtype_str = dtype_to_str(latent.dtype)
     sd = {f"latents_{F}x{H}x{W}_{dtype_str}": latent.detach().cpu().contiguous()}
 
-    save_latent_cache_common(item_info, sd, ARCHITECTURE_QWEN_IMAGE_FULL)
+    save_latent_cache_common(item_info, sd, ARCHITECTURE_QWEN_IMAGE_FULL, getattr(item_info, "cache_metadata", None))
 
 
 def _merge_cache_metadata(required: dict[str, str], additional: Optional[dict[str, str]]) -> dict[str, str]:
@@ -67,11 +69,17 @@ def save_latent_cache_common(
 
 def save_text_encoder_output_cache_qwen_image(item_info: ItemInfo, embed: torch.Tensor):
     """Qwen-Image architecture."""
+    if getattr(item_info, "cache_metadata", None) and not torch.isfinite(embed.float()).all().item():
+        raise ValueError(f"{item_info.item_key}: invalid nonfinite text embedding; correct the encoder before creating fixed caches")
     sd = {}
     dtype_str = dtype_to_str(embed.dtype)
     sd[f"varlen_vl_embed_{dtype_str}"] = embed.detach().cpu()
 
-    save_text_encoder_output_cache_common(item_info, sd, ARCHITECTURE_QWEN_IMAGE_FULL)
+    save_text_encoder_output_cache_common(
+        item_info, sd, ARCHITECTURE_QWEN_IMAGE_FULL,
+        merge_existing=not bool(getattr(item_info, "cache_metadata", None)),
+        additional_metadata=getattr(item_info, "cache_metadata", None),
+    )
 
 
 def save_text_encoder_output_cache_common(

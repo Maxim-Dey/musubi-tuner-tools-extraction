@@ -28,14 +28,117 @@ def resolve(monkeypatch, tmp_path, config=None, cli=()):
 
 def test_all_training_template_values_and_cli_precedence(tmp_path, monkeypatch):
     config = toml.load(TEMPLATES / "train.toml")
-    assert len(config) == 40
+    expected = dict(
+        experiment_mode=True,
+        dit="/workspace/models/qwen_image_2512_bf16.safetensors",
+        vae="/workspace/models/qwen_image_vae.safetensors",
+        text_encoder="/workspace/models/qwen_2.5_vl_7b.safetensors",
+        model_version="original",
+        output_dir="output",
+        output_name="qwen_image_lora_val_example",
+        logging_dir="output/tensorboard",
+        log_prefix="qwen_image_lora_val_example",
+        log_with="tensorboard",
+        network_module="networks.lora_qwen_image",
+        network_dim=32,
+        network_alpha=32,
+        network_dropout=0.05,
+        max_train_steps=5000,
+        gradient_accumulation_steps=1,
+        seed=42,
+        optimizer_type="adamw8bit",
+        learning_rate=1e-4,
+        lr_scheduler="constant_with_warmup",
+        lr_warmup_steps=100,
+        max_grad_norm=1.0,
+        save_precision="fp32",
+        save_state=True,
+        save_every_n_steps=50,
+        save_last_n_steps=1000,
+        val_every_n_steps=50,
+        val_seed_noise=42,
+        val_level_noise_n=10,
+        val_seed_noise_n=2,
+        sample_prompts="sample_prompts.txt",
+        sample_every_n_steps=50,
+        sample_at_first=False,
+        dataset_config="train-dataset.toml",
+        val_dataset_config="val-dataset.toml",
+        mixed_precision="bf16",
+        fp8_base=False,
+        fp8_scaled=False,
+        fp8_vl=False,
+        blocks_to_swap=0,
+        sdpa=True,
+        gradient_checkpointing=True,
+        timestep_sampling="shift",
+        discrete_flow_shift=2.2,
+        weighting_scheme="none",
+        max_data_loader_n_workers=2,
+        persistent_data_loader_workers=True,
+    )
+    assert config == expected
     args = resolve(monkeypatch, tmp_path, config)
+    relative_paths = {"dataset_config", "val_dataset_config", "sample_prompts", "output_dir", "logging_dir"}
     for key, value in config.items():
-        assert getattr(args, key) == value
+        assert getattr(args, key) == (str((tmp_path / value).resolve()) if key in relative_paths else value)
     args = resolve(monkeypatch, tmp_path, config, ["--network_dim", "8", "--learning_rate", "0.002", "--fp8_base"])
     assert (args.network_dim, args.learning_rate, args.fp8_base) == (8, 0.002, True)
-    assert args.max_train_steps == 1600
-    assert type(args.lr_warmup_steps) is int and args.lr_warmup_steps == 200
+    assert args.max_train_steps == 5000
+    assert type(args.lr_warmup_steps) is int and args.lr_warmup_steps == 100
+
+
+@pytest.mark.parametrize(
+    "profile", ["train.toml", "acceptance/train.toml", "acceptance/resume.toml", "acceptance/periodic-final.toml"]
+)
+def test_supplied_profiles_with_real_readers_from_other_cwd(tmp_path, monkeypatch, profile):
+    import argparse
+    from musubi_tuner.dataset import config_utils
+
+    path = TEMPLATES / profile
+    raw = toml.load(path)
+    monkeypatch.chdir(tmp_path)
+    parser = training.qwen_image_setup_parser(setup_parser_common())
+    monkeypatch.setattr(sys, "argv", ["fixture", "--config_file", str(path)])
+    args = read_config_from_file(parser.parse_args(), parser)
+    assert args.experiment_mode
+    assert args.dit == raw["dit"] and args.vae == raw["vae"] and args.text_encoder == raw["text_encoder"]
+    assert Path(args.output_dir) == (path.parent / raw["output_dir"]).resolve()
+    assert Path(args.logging_dir) == (path.parent / raw["logging_dir"]).resolve()
+    assert Path(args.sample_prompts) == path.parent / "sample_prompts.txt"
+    assert load_prompts(args.sample_prompts)
+    if args.resume:
+        assert Path(args.resume) == (path.parent / raw["resume"]).resolve()
+    expected_resolution = (256, 256) if "acceptance" in profile else (1024, 1024)
+    for name, filename in (("train", args.dataset_config), ("val", args.val_dataset_config)):
+        dataset_args = argparse.Namespace(**vars(args))
+        dataset_args.dataset_config = filename
+        blueprint = config_utils.BlueprintGenerator(config_utils.ConfigSanitizer()).generate(
+            config_utils.load_user_config(filename), dataset_args, architecture="qi"
+        )
+        params = blueprint.dataset_group.datasets[0].params
+        assert params.resolution == expected_resolution
+        assert params.num_repeats == 1
+        assert params.batch_size == (16 if name == "train" and profile == "train.toml" else 1)
+        assert params.enable_bucket and params.bucket_no_upscale and params.caption_extension == ".txt"
+        assert Path(params.image_directory) == path.parent / "dataset" / name
+        assert Path(params.cache_directory) == path.parent / "cache" / name
+
+
+def test_short_acceptance_profiles_are_isolated_and_cover_scenarios():
+    directory = TEMPLATES / "acceptance"
+    initial, resumed, periodic = (toml.load(directory / name) for name in ("train.toml", "resume.toml", "periodic-final.toml"))
+    assert (initial["max_train_steps"], resumed["max_train_steps"], periodic["max_train_steps"]) == (3, 5, 4)
+    assert initial["output_dir"] == resumed["output_dir"] != periodic["output_dir"]
+    assert initial["val_level_noise_n"] == 10 and initial["val_seed_noise_n"] == 2
+    assert (periodic["val_level_noise_n"], periodic["val_seed_noise_n"]) == (2, 1)
+    assert initial["save_every_n_steps"] == 3 and periodic["save_every_n_steps"] == 2
+    assert initial["save_last_n_steps"] == 4 and initial["save_last_n_steps_state"] == 2
+    for profile in (initial, resumed, periodic):
+        assert profile["gradient_accumulation_steps"] == 2 and profile["network_dropout"] > 0
+        assert profile["val_every_n_steps"] == 2 and profile["sample_every_n_steps"] == 2
+        assert profile["lr_warmup_steps"] == 1 and profile["save_state"] and profile["save_precision"] == "fp32"
+        assert profile["output_dir"] != "output" and profile["output_name"] != "qwen_image_lora_val_example"
 
 
 def test_sections_suffix_and_supported_override(tmp_path, monkeypatch):
@@ -91,9 +194,9 @@ def test_raw_excluded_fields_cannot_be_masked(tmp_path, monkeypatch, raw, cli):
 
 def test_prompt_templates_and_all_readers(tmp_path):
     supplied = load_prompts(str(TEMPLATES / "sample_prompts.txt"))
-    assert len(supplied) == 2
-    assert [p["enum"] for p in supplied] == [0, 1]
-    assert all(p["sample_steps"] == 30 and p["cfg_scale"] == 4 for p in supplied)
+    assert len(supplied) == 10
+    assert [p["enum"] for p in supplied] == list(range(10))
+    assert all(p["sample_steps"] == 20 and p["cfg_scale"] == 4 for p in supplied)
     path = tmp_path / "samples.toml"
     path.write_text(
         '[prompt]\nwidth=512\nheight=768\n[[prompt.subset]]\nprompt="one"\n[[prompt.subset]]\nprompt="two"\nwidth=640\n',
@@ -266,6 +369,31 @@ def test_training_early_errors_precede_every_effect(tmp_path, monkeypatch, invoc
     assert key in str(error.value)
     assert str(path) in str(error.value)
     assert effects == []
+
+
+@pytest.mark.parametrize("name", ["../nested", "nested/name", "nested\\name", "name:part", ".", ".."])
+@pytest.mark.parametrize("via_cli", [False, True])
+def test_experiment_output_name_rejected_before_model(tmp_path, monkeypatch, invocation, name, via_cli):
+    effects = forbid_effects(monkeypatch)
+    path = tmp_path / "training.toml"
+    path.write_text(
+        toml.dumps({**invocation, "experiment_mode": True, "output_name": "adapter" if via_cli else name}), encoding="utf-8"
+    )
+    argv = ["fixture", "--config_file", str(path)]
+    if via_cli:
+        argv += ["--output_name", name]
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(ValueError, match="output_name.*file name") as error:
+        training.main()
+    assert str(path) in str(error.value)
+    assert effects == []
+
+
+@pytest.mark.parametrize("experiment,name", [(True, "adapter.v2-a"), (False, "nested/name")])
+def test_output_name_valid_and_legacy_preflight(tmp_path, monkeypatch, invocation, experiment, name):
+    args = resolve(monkeypatch, tmp_path, {**invocation, "experiment_mode": experiment, "output_name": name})
+    training.validate_training_args(args)
+    assert args.output_name == name
 
 
 @pytest.mark.parametrize("module_name", ["qwen_image_cache_latents", "qwen_image_cache_text_encoder_outputs"])

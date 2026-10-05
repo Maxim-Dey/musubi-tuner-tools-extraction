@@ -1,0 +1,52 @@
+# Short GPU acceptance only. Real model/data paths must be inspected on the server.
+# Independent source images belong in acceptance/dataset/train and acceptance/dataset/val.
+# Reduced profile: 256px, batch1, accumulation2. This does not validate 1024px/batch16.
+# Independent scenario: val0,2,4, with final/periodic deduplication at4.
+experiment_mode = true
+dit = "/workspace/models/qwen_image_2512_bf16.safetensors"
+vae = "/workspace/models/qwen_image_vae.safetensors"
+text_encoder = "/workspace/models/qwen_2.5_vl_7b.safetensors"
+model_version = "original"
+output_dir = "output-periodic"
+output_name = "qwen_image_val_acceptance"
+log_prefix = "qwen_image_val_acceptance_periodic"
+log_with = "tensorboard"
+logging_dir = "output-periodic/tensorboard"
+network_module = "networks.lora_qwen_image"
+network_dim = 32
+network_alpha = 32
+network_dropout = 0.05
+max_train_steps = 4
+gradient_accumulation_steps = 2
+seed = 42
+optimizer_type = "adamw8bit"
+learning_rate = 0.0001
+lr_scheduler = "constant_with_warmup"
+lr_warmup_steps = 1
+max_grad_norm = 1.0
+save_precision = "fp32"
+save_every_n_steps = 2
+save_last_n_steps = 4
+save_state = true
+val_every_n_steps = 2
+val_seed_noise = 42
+val_level_noise_n = 2
+val_seed_noise_n = 1
+sample_prompts = "sample_prompts.txt"
+sample_every_n_steps = 2
+sample_at_first = false
+dataset_config = "train-dataset.toml"
+val_dataset_config = "val-dataset.toml"
+mixed_precision = "bf16"
+fp8_base = false
+fp8_scaled = false
+fp8_vl = false
+blocks_to_swap = 0
+sdpa = true
+gradient_checkpointing = true
+timestep_sampling = "shift"
+discrete_flow_shift = 2.2
+weighting_scheme = "none"
+max_data_loader_n_workers = 0
+persistent_data_loader_workers = false
+save_last_n_steps_state = 2

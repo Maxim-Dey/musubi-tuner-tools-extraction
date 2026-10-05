@@ -154,7 +154,7 @@ class ImageJsonlDatasource(ImageDatasource):
     # the shared image JSONL schema (numbered variants included); every other key is an item extra
     SHARED_KEYS = ("image_path", "caption")
 
-    def __init__(self, image_jsonl_file: str):
+    def __init__(self, image_jsonl_file: str, resolve_relative_paths: bool = False):
         super().__init__()
         self.image_jsonl_file = image_jsonl_file
         self.current_idx = 0
@@ -177,9 +177,12 @@ class ImageJsonlDatasource(ImageDatasource):
                 for key in self.SHARED_KEYS:
                     if not isinstance(data.get(key), str):
                         raise ValueError(f"{label}: {key} must be a string; supply an image path and caption")
+                if resolve_relative_paths and not os.path.isabs(data["image_path"]):
+                    data["image_path"] = os.path.abspath(os.path.join(os.path.dirname(image_jsonl_file), data["image_path"]))
                 if not os.path.isfile(data["image_path"]):
+                    base = "the JSONL directory" if resolve_relative_paths else "the working directory"
                     raise ValueError(
-                        f"{label}: image_path {data['image_path']!r} not found; supply an existing image path relative to the working directory or absolute"
+                        f"{label}: image_path {data['image_path']!r} not found; supply an existing image path relative to {base} or absolute"
                     )
                 self.data.append(data)
         logger.info(f"loaded {len(self.data)} images")

@@ -1,27 +1,38 @@
 # Qwen-Image original adapter training
 
-This repository trains original Qwen-Image adapters with the existing Musubi Tuner engine. The supported workflow is captioned images → latent cache → caption embedding cache → adapter training with optional sample PNGs. Use the [README](../README.md) and the three [templates](../config_for_qwen_image_lora/train.toml).
+This repository trains original Qwen-Image LoRA/LoHa/LoKr adapters with the existing Musubi Tuner engine. The workflow is captioned train/val images → latent caches → caption embedding caches → adapter training with deterministic val-loss and optional sample PNGs. Use the [README](../README.ru.md), [training profile](../config_for_qwen_image_lora/train.toml), [train dataset](../config_for_qwen_image_lora/train-dataset.toml) and [val dataset](../config_for_qwen_image_lora/val-dataset.toml).
 
-Run from the repository root. Replace all `/srv/...` paths with your inputs; paths are resolved from process CWD, including paths inside TOML and JSONL.
+Prepare independent, nonempty train and val folders with image/text pairs. There is no automatic split; image contents must not overlap. The shipped profile uses 1024×1024 buckets, train batch=16, val batch/repeats=1, LoRA rank/alpha=32, 5000 total updates and integer warmup=100. These are configurable values. CPU checks do not establish that the supplied resources exist or batch=16 fits a GPU.
+
+Run these four cache passes from the repository root. Replace the absolute model paths here and in `train.toml` with your files. The package must be installed or `src` included in `PYTHONPATH`.
 
 ```bash
-python qwen_image_cache_latents.py --dataset_config config_for_qwen_image_lora/dataset.toml --vae /srv/models/qwen_image_vae.safetensors --model_version original
-python qwen_image_cache_text_encoder_outputs.py --dataset_config config_for_qwen_image_lora/dataset.toml --text_encoder /srv/models/qwen_2.5_vl_7b.safetensors --model_version original
+export PYTHONPATH="$PWD/src"
+python qwen_image_cache_latents.py --dataset_config config_for_qwen_image_lora/train-dataset.toml --vae /workspace/models/qwen_image_vae.safetensors --model_version original --experiment_mode
+python qwen_image_cache_latents.py --dataset_config config_for_qwen_image_lora/val-dataset.toml --vae /workspace/models/qwen_image_vae.safetensors --model_version original --experiment_mode --validation
+python qwen_image_cache_text_encoder_outputs.py --dataset_config config_for_qwen_image_lora/train-dataset.toml --text_encoder /workspace/models/qwen_2.5_vl_7b.safetensors --model_version original --experiment_mode
+python qwen_image_cache_text_encoder_outputs.py --dataset_config config_for_qwen_image_lora/val-dataset.toml --text_encoder /workspace/models/qwen_2.5_vl_7b.safetensors --model_version original --experiment_mode --validation
 accelerate launch --mixed_precision bf16 qwen_image_train_network.py --config_file config_for_qwen_image_lora/train.toml
 ```
 
-The same commands are available as `python -m musubi_tuner.qwen_image_cache_latents`, `python -m musubi_tuner.qwen_image_cache_text_encoder_outputs`, and `python -m musubi_tuner.qwen_image_train_network`. The package must be installed or `src` included in `PYTHONPATH`.
+The three entrypoints also work as `python -m musubi_tuner.<command_name>`. Cache commands accept their own CLI settings, including `--experiment_mode` and `--validation`; they do not read training TOML or accept `--config_file`. With experiment mode, training paths resolve against `train.toml`, dataset source/cache paths against their dataset TOML, and JSONL image paths against their JSONL file. Relative cache-command model paths resolve against the dataset TOML. Absolute paths remain unchanged; without experiment mode, relative paths retain process-CWD semantics. The [README](../README.ru.md) includes a launch from another working directory.
 
-Use the original DiT, RGB VAE and Qwen2.5-VL weights. The text loader obtains tokenizer assets from `Qwen/Qwen-Image`, subfolder `tokenizer`; prepare them in the operational environment. DiT execution uses bf16. The training VAE dtype default is bf16; the Qwen VAE loader retains its existing loading behavior. `num_layers` defaults to 60 and must match the checkpoint.
+Use the original DiT, RGB VAE and Qwen2.5-VL weights. The text loader obtains tokenizer assets from `Qwen/Qwen-Image`, subfolder `tokenizer`; prepare them in the operational environment. DiT execution uses bf16. The training VAE dtype default is bf16; the Qwen VAE loader retains its existing loading behavior. `num_layers` defaults to 60 and must match the checkpoint. Model version is `original` only.
 
-The supplied paths, H200 comment, rank 16, 1600 updates and batch/resolution values are examples, not fixed requirements. Defaults are overridden by training TOML and then explicit CLI. Omitted CLI flags preserve TOML; store-true flags cannot disable a true TOML setting. Unknown fields/types, excluded selectors and invalid effective values fail early. The only model version is `original`. [Alternative adapters](loha_lokr.md) retain the Qwen model engine.
+Defaults are overridden by training TOML and then explicit CLI. Omitted CLI flags preserve TOML; store-true flags cannot disable a true TOML setting. Unknown fields/types, excluded selectors and invalid effective values fail early. [Alternative adapters](loha_lokr.md) retain the Qwen model engine.
 
-Both cache commands have independent CLI settings and never read training TOML. `batch_size` caps encoding chunks; the dataset declaration controls training batch size. `num_workers` must be positive when explicitly set. `skip_existing` checks existence only; rebuild affected caches after changing images, captions, weights or relevant settings. `keep_cache` preserves stale files that normal cache cleanup removes. Latent cache debug supports `image` and `console`; Qwen latent caching does not accept an explicit `vae_dtype` or tiling/chunk options.
+Cache CLI `batch_size` caps encoding chunks; the dataset declaration controls training batch size. Explicit `num_workers` must be positive. Without `--validation`, `skip_existing` checks existence; with it, existing caches must have current valid source/preparation provenance. `keep_cache` preserves stale files that normal cleanup removes. Latent debug supports `image` and `console`; Qwen latent caching does not accept explicit `vae_dtype` or tiling/chunk options.
 
-Latent caches preserve `[C,1,H,W]`; the singleton axis is required by the original VAE. Text caches keep variable-length `[L,D]` embeddings. Training pads text and preserves masks/split attention. Missing text caches are warned and skipped; an empty effective training dataset fails before models.
+Latent caches preserve `[C,1,H,W]`; the singleton axis is required by the original VAE. Text caches keep variable-length `[L,D]` embeddings. Training pads text and preserves masks/split attention. Legacy training warns and skips missing text caches. Enabled validation requires complete, valid prepared val caches and checks effective training cache associations before model loading. It neither skips val images nor regenerates caches. Empty effective datasets are errors.
+
+`val_dataset_config` enables validation independently of experiment mode. Default interval/seed/N1/N2 are 50/42/10/2. Fixed noise and timestep evaluation reuses the train loss and reports `val_loss_mean`, `val_loss_low_noise`, `val_loss_high_noise` at step zero, configured completed optimizer steps and the final step. It preserves training RNG and module modes. N1 must be even and at least 2; see [advanced options](advanced_config.md) for the precise math.
+
+In experiment mode, each checkpoint is `output/<output_name>-step<actual_optimizer_step>/`: one `model.safetensors`, optional complete Accelerate state plus `trainer_state.json` and a completion manifest, and `samples/`. Resumable state requires FP32 adapter saving. Weights-only export honors `save_precision` but cannot resume. Sample-only folders cannot resume either. Periodic and final saves at the same step share the checkpoint.
+
+Resume with `--resume output/<output_name>-step<step>` relative to `train.toml`. With validation or experiment mode, `max_train_steps` is the total target; the explicit optimizer step and the same TensorBoard run continue. The profile keeps an inclusive 1000-step weights window; an omitted/zero state window inherits it. Set `save_last_n_steps_state=200` for a shorter state window. Retention preserves samples. With both modes disabled, legacy checkpoint names, path semantics and resume behavior remain.
 
 See [datasets](dataset_config.md), [sampling](sampling_during_training.md), [advanced options](advanced_config.md), [block swap](block_swap.md) and [compilation](torch_compile.md). No standalone inference, full finetuning, editing, layered, audio or video workflow is shipped.
 
 ## 日本語
 
-元のQwen-Imageのアダプター学習のみを対象とします。画像とキャプションを用意し、latentとテキスト埋め込みの両方をキャッシュしてから学習します。上記コマンドはリポジトリのルートで実行し、外部パスを置き換えてください。相対パスの基準は設定ファイルの場所ではなく、実行時の作業ディレクトリです。実モデルでの動作確認は別の運用段階です。
+元のQwen-Imageのアダプター学習のみを対象とします。独立したtrain/val画像とキャプションを用意し、上記4回の処理で両方のキャッシュを作成してください。experiment modeでは各設定ファイルとJSONLを基準に相対パスを解決し、従来モードでは作業ディレクトリを基準にします。valでは`--validation`を指定します。再開可能なstateにはFP32のアダプターが必要です。実モデルと元のbatch=16でのGPU確認はCPUテストとは別です。

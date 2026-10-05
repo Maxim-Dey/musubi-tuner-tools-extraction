@@ -1,0 +1,46 @@
+{
+  "last_validation": {
+    "adapter_identity": "e38eadc5d935665e3c1de7dc7aa0613c7e30356bf027df682caf999f748930e5",
+    "computation_identity": "7867df452f458cdc622ad8e907920abecae305d9f0193673d67b73250d3efe51",
+    "metrics": {
+      "val_loss_high_noise": 0.15449386537075044,
+      "val_loss_low_noise": 0.13013386651873587,
+      "val_loss_mean": 0.14231386594474316
+    },
+    "step": 2,
+    "validation_fingerprint": "8e77dd036ee857a60a3c533952576fa4b10ccb1ffc3b1175d6437a5b6366c552"
+  },
+  "optimizer_global_step": 3,
+  "schema": 1,
+  "tensorboard_project_dir": "output-resume/tensorboard/qwen_image_val_acceptance_resume20261005163322827734",
+  "tensorboard_run_name": "network_train",
+  "validation_computation_contract": {
+    "dit_dtype": "torch.bfloat16",
+    "dit_sha256": "cbf55390fff27dbc785046d7007b04e0c5dd7421e7ef128f2831eacb53a8e075",
+    "forward_options": {
+      "compile": false,
+      "compile_backend": "inductor",
+      "compile_dynamic": null,
+      "compile_fullgraph": false,
+      "compile_mode": "default",
+      "cuda_allow_tf32": false,
+      "cuda_cudnn_benchmark": false,
+      "dynamo_backend": "NO",
+      "dynamo_dynamic": false,
+      "dynamo_fullgraph": false,
+      "dynamo_mode": null,
+      "flash_attn": false,
+      "fp8_base": false,
+      "fp8_scaled": false,
+      "num_layers": null,
+      "sdpa": true,
+      "split_attn": false,
+      "xformers": false
+    },
+    "merged_base_weights": [],
+    "mixed_precision": "bf16",
+    "version": 1,
+    "weighting_scheme": "none"
+  },
+  "validation_fingerprint": "8e77dd036ee857a60a3c533952576fa4b10ccb1ffc3b1175d6437a5b6366c552"
+}

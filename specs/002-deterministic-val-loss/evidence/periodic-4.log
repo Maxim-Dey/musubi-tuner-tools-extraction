@@ -1,0 +1,133 @@
+INFO:musubi_tuner.training.trainer_base:Load dataset config from /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/train-dataset.toml
+INFO:musubi_tuner.dataset.datasources:glob images in /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/dataset/train
+INFO:musubi_tuner.dataset.datasources:found 2 images
+INFO:musubi_tuner.dataset.config_utils:[Dataset 0]
+  is_image_dataset: True
+  resolution: (256, 256)
+  batch_size: 1
+  num_repeats: 1
+  caption_extension: ".txt"
+  enable_bucket: True
+  bucket_no_upscale: True
+  cache_directory: "/workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/cache/train"
+  debug_dataset: False
+    image_directory: /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/dataset/train
+    image_jsonl_file: None
+
+INFO:musubi_tuner.dataset.bucket:bucket: (256, 256), count: 2
+INFO:musubi_tuner.dataset.bucket:total batches: 2
+INFO:musubi_tuner.dataset.datasources:glob images in /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/dataset/val
+INFO:musubi_tuner.dataset.datasources:found 1 images
+INFO:musubi_tuner.training.trainer_base:preparing accelerator
+accelerator device: cuda
+INFO:musubi_tuner.training.trainer_base:DiT precision: torch.bfloat16, weight precision: torch.bfloat16
+INFO:musubi_tuner.qwen_image.qwen_image_utils:Loading state dict from /workspace/models/qwen_2.5_vl_7b.safetensors
+INFO:musubi_tuner.qwen_image.qwen_image_utils:Loaded Qwen2.5-VL: <All keys matched successfully>
+INFO:musubi_tuner.qwen_image.qwen_image_utils:Setting Qwen2.5-VL to dtype: torch.bfloat16
+INFO:musubi_tuner.qwen_image.qwen_image_utils:Loading tokenizer from Qwen/Qwen-Image
+INFO:musubi_tuner.qwen_image_train_network:cache Text Encoder outputs for prompt: A large gold coin with a "₽" mark is in the center on an empty background.
+INFO:musubi_tuner.qwen_image_train_network:cache Text Encoder outputs for prompt:  
+INFO:musubi_tuner.qwen_image_train_network:Loading VAE model from /workspace/models/qwen_image_vae.safetensors
+INFO:musubi_tuner.qwen_image.qwen_image_utils:Initializing VAE
+INFO:musubi_tuner.qwen_image.qwen_image_utils:Loading VAE from /workspace/models/qwen_image_vae.safetensors
+INFO:musubi_tuner.qwen_image.qwen_image_utils:Converted ComfyUI AutoencoderKL state dict keys to official format
+INFO:musubi_tuner.qwen_image.qwen_image_utils:Loaded VAE: <All keys matched successfully>
+INFO:musubi_tuner.training.trainer_base:Loading DiT model from /workspace/models/qwen_image_2512_bf16.safetensors
+INFO:musubi_tuner.qwen_image.qwen_image_model:Creating QwenImageTransformer2DModel. Attn mode: torch, split_attn: False, num_layers: None 
+INFO:musubi_tuner.qwen_image.qwen_image_model:Loading DiT model from /workspace/models/qwen_image_2512_bf16.safetensors, device=cuda
+INFO:musubi_tuner.utils.lora_utils:Loading model files: ['/workspace/models/qwen_image_2512_bf16.safetensors']
+INFO:musubi_tuner.utils.lora_utils:Loading state dict without FP8 optimization. Dtype of weight: torch.bfloat16, hook enabled: False
+Loading qwen_image_2512_bf16.safetensors:   0%|          | 0/1933 [00:00<?, ?it/s]Loading qwen_image_2512_bf16.safetensors:   1%|          | 16/1933 [00:00<00:13, 144.75it/s]Loading qwen_image_2512_bf16.safetensors:   2%|▏         | 32/1933 [00:00<00:12, 149.53it/s]Loading qwen_image_2512_bf16.safetensors:   2%|▏         | 47/1933 [00:00<00:21, 89.40it/s] Loading qwen_image_2512_bf16.safetensors:   3%|▎         | 64/1933 [00:00<00:16, 110.02it/s]Loading qwen_image_2512_bf16.safetensors:   4%|▍         | 77/1933 [00:00<00:21, 84.80it/s] Loading qwen_image_2512_bf16.safetensors:   5%|▍         | 95/1933 [00:00<00:17, 106.12it/s]Loading qwen_image_2512_bf16.safetensors:   6%|▌         | 108/1933 [00:01<00:23, 76.13it/s]Loading qwen_image_2512_bf16.safetensors:   7%|▋         | 126/1933 [00:01<00:19, 94.12it/s]Loading qwen_image_2512_bf16.safetensors:   7%|▋         | 139/1933 [00:01<00:24, 73.87it/s]Loading qwen_image_2512_bf16.safetensors:   8%|▊         | 156/1933 [00:01<00:19, 89.87it/s]Loading qwen_image_2512_bf16.safetensors:   9%|▊         | 168/1933 [00:01<00:23, 74.68it/s]Loading qwen_image_2512_bf16.safetensors:   9%|▉         | 178/1933 [00:02<00:22, 78.52it/s]Loading qwen_image_2512_bf16.safetensors:  10%|▉         | 192/1933 [00:02<00:19, 88.59it/s]Loading qwen_image_2512_bf16.safetensors:  11%|█         | 203/1933 [00:02<00:25, 68.09it/s]Loading qwen_image_2512_bf16.safetensors:  11%|█         | 217/1933 [00:02<00:21, 80.23it/s]Loading qwen_image_2512_bf16.safetensors:  12%|█▏        | 227/1933 [00:02<00:21, 77.99it/s]Loading qwen_image_2512_bf16.safetensors:  12%|█▏        | 237/1933 [00:02<00:25, 65.71it/s]Loading qwen_image_2512_bf16.safetensors:  13%|█▎        | 254/1933 [00:03<00:19, 84.58it/s]Loading qwen_image_2512_bf16.safetensors:  14%|█▎        | 265/1933 [00:03<00:23, 70.08it/s]Loading qwen_image_2512_bf16.safetensors:  14%|█▍        | 274/1933 [00:03<00:22, 72.45it/s]Loading qwen_image_2512_bf16.safetensors:  15%|█▍        | 288/1933 [00:03<00:19, 82.50it/s]Loading qwen_image_2512_bf16.safetensors:  15%|█▌        | 298/1933 [00:03<00:23, 69.87it/s]Loading qwen_image_2512_bf16.safetensors:  16%|█▋        | 316/1933 [00:03<00:17, 92.54it/s]Loading qwen_image_2512_bf16.safetensors:  17%|█▋        | 327/1933 [00:03<00:19, 83.51it/s]Loading qwen_image_2512_bf16.safetensors:  17%|█▋        | 337/1933 [00:04<00:19, 80.97it/s]Loading qwen_image_2512_bf16.safetensors:  18%|█▊        | 351/1933 [00:04<00:16, 94.02it/s]Loading qwen_image_2512_bf16.safetensors:  19%|█▊        | 362/1933 [00:04<00:21, 73.22it/s]Loading qwen_image_2512_bf16.safetensors:  20%|█▉        | 380/1933 [00:04<00:16, 95.21it/s]Loading qwen_image_2512_bf16.safetensors:  20%|██        | 392/1933 [00:04<00:18, 81.73it/s]Loading qwen_image_2512_bf16.safetensors:  21%|██        | 406/1933 [00:04<00:16, 92.10it/s]Loading qwen_image_2512_bf16.safetensors:  22%|██▏       | 418/1933 [00:04<00:15, 95.03it/s]Loading qwen_image_2512_bf16.safetensors:  22%|██▏       | 429/1933 [00:05<00:15, 94.94it/s]Loading qwen_image_2512_bf16.safetensors:  23%|██▎       | 449/1933 [00:05<00:12, 120.66it/s]Loading qwen_image_2512_bf16.safetensors:  24%|██▍       | 463/1933 [00:05<00:16, 91.72it/s] Loading qwen_image_2512_bf16.safetensors:  25%|██▍       | 480/1933 [00:05<00:14, 102.42it/s]Loading qwen_image_2512_bf16.safetensors:  25%|██▌       | 492/1933 [00:05<00:18, 80.03it/s] Loading qwen_image_2512_bf16.safetensors:  26%|██▋       | 510/1933 [00:05<00:14, 99.37it/s]Loading qwen_image_2512_bf16.safetensors:  27%|██▋       | 523/1933 [00:06<00:17, 80.89it/s]Loading qwen_image_2512_bf16.safetensors:  28%|██▊       | 540/1933 [00:06<00:14, 97.86it/s]Loading qwen_image_2512_bf16.safetensors:  29%|██▊       | 553/1933 [00:06<00:16, 84.60it/s]Loading qwen_image_2512_bf16.safetensors:  29%|██▉       | 565/1933 [00:06<00:14, 91.57it/s]Loading qwen_image_2512_bf16.safetensors:  30%|██▉       | 576/1933 [00:06<00:14, 94.22it/s]Loading qwen_image_2512_bf16.safetensors:  30%|███       | 587/1933 [00:06<00:17, 77.63it/s]Loading qwen_image_2512_bf16.safetensors:  31%|███       | 604/1933 [00:06<00:13, 97.08it/s]Loading qwen_image_2512_bf16.safetensors:  32%|███▏      | 616/1933 [00:07<00:16, 82.04it/s]Loading qwen_image_2512_bf16.safetensors:  33%|███▎      | 630/1933 [00:07<00:14, 91.84it/s]Loading qwen_image_2512_bf16.safetensors:  33%|███▎      | 642/1933 [00:07<00:13, 92.81it/s]Loading qwen_image_2512_bf16.safetensors:  34%|███▍      | 653/1933 [00:07<00:16, 77.37it/s]Loading qwen_image_2512_bf16.safetensors:  35%|███▍      | 672/1933 [00:07<00:13, 96.73it/s]Loading qwen_image_2512_bf16.safetensors:  35%|███▌      | 683/1933 [00:07<00:15, 82.33it/s]Loading qwen_image_2512_bf16.safetensors:  36%|███▋      | 702/1933 [00:08<00:11, 102.88it/s]Loading qwen_image_2512_bf16.safetensors:  37%|███▋      | 714/1933 [00:08<00:14, 83.91it/s] Loading qwen_image_2512_bf16.safetensors:  38%|███▊      | 734/1933 [00:08<00:11, 105.41it/s]Loading qwen_image_2512_bf16.safetensors:  39%|███▊      | 747/1933 [00:08<00:13, 86.24it/s] Loading qwen_image_2512_bf16.safetensors:  40%|███▉      | 766/1933 [00:08<00:11, 106.07it/s]Loading qwen_image_2512_bf16.safetensors:  40%|████      | 779/1933 [00:08<00:13, 85.95it/s] Loading qwen_image_2512_bf16.safetensors:  41%|████▏     | 798/1933 [00:09<00:10, 104.95it/s]Loading qwen_image_2512_bf16.safetensors:  42%|████▏     | 811/1933 [00:09<00:13, 85.40it/s] Loading qwen_image_2512_bf16.safetensors:  43%|████▎     | 830/1933 [00:09<00:10, 105.36it/s]Loading qwen_image_2512_bf16.safetensors:  44%|████▎     | 844/1933 [00:09<00:12, 86.23it/s] Loading qwen_image_2512_bf16.safetensors:  45%|████▍     | 864/1933 [00:09<00:10, 103.92it/s]Loading qwen_image_2512_bf16.safetensors:  45%|████▌     | 877/1933 [00:09<00:11, 89.95it/s] Loading qwen_image_2512_bf16.safetensors:  46%|████▋     | 896/1933 [00:10<00:09, 104.84it/s]Loading qwen_image_2512_bf16.safetensors:  47%|████▋     | 909/1933 [00:10<00:11, 90.14it/s] Loading qwen_image_2512_bf16.safetensors:  48%|████▊     | 924/1933 [00:10<00:10, 99.36it/s]Loading qwen_image_2512_bf16.safetensors:  48%|████▊     | 936/1933 [00:10<00:11, 87.95it/s]Loading qwen_image_2512_bf16.safetensors:  49%|████▉     | 950/1933 [00:10<00:10, 98.03it/s]Loading qwen_image_2512_bf16.safetensors:  50%|████▉     | 962/1933 [00:10<00:09, 98.18it/s]Loading qwen_image_2512_bf16.safetensors:  50%|█████     | 973/1933 [00:10<00:11, 85.74it/s]Loading qwen_image_2512_bf16.safetensors:  51%|█████▏    | 992/1933 [00:11<00:09, 101.78it/s]Loading qwen_image_2512_bf16.safetensors:  52%|█████▏    | 1003/1933 [00:11<00:11, 83.40it/s]Loading qwen_image_2512_bf16.safetensors:  53%|█████▎    | 1022/1933 [00:11<00:08, 103.71it/s]Loading qwen_image_2512_bf16.safetensors:  53%|█████▎    | 1034/1933 [00:11<00:10, 84.81it/s] Loading qwen_image_2512_bf16.safetensors:  55%|█████▍    | 1054/1933 [00:11<00:08, 107.79it/s]Loading qwen_image_2512_bf16.safetensors:  55%|█████▌    | 1067/1933 [00:11<00:09, 87.49it/s] Loading qwen_image_2512_bf16.safetensors:  56%|█████▌    | 1086/1933 [00:12<00:07, 107.34it/s]Loading qwen_image_2512_bf16.safetensors:  57%|█████▋    | 1099/1933 [00:12<00:09, 87.86it/s] Loading qwen_image_2512_bf16.safetensors:  58%|█████▊    | 1120/1933 [00:12<00:07, 107.08it/s]Loading qwen_image_2512_bf16.safetensors:  59%|█████▊    | 1133/1933 [00:12<00:08, 93.14it/s] Loading qwen_image_2512_bf16.safetensors:  60%|█████▉    | 1152/1933 [00:12<00:07, 107.12it/s]Loading qwen_image_2512_bf16.safetensors:  60%|██████    | 1165/1933 [00:12<00:08, 92.79it/s] Loading qwen_image_2512_bf16.safetensors:  61%|██████▏   | 1184/1933 [00:13<00:06, 109.00it/s]Loading qwen_image_2512_bf16.safetensors:  62%|██████▏   | 1197/1933 [00:13<00:07, 95.04it/s] Loading qwen_image_2512_bf16.safetensors:  63%|██████▎   | 1216/1933 [00:13<00:06, 111.55it/s]Loading qwen_image_2512_bf16.safetensors:  64%|██████▎   | 1229/1933 [00:13<00:07, 96.19it/s] Loading qwen_image_2512_bf16.safetensors:  65%|██████▍   | 1248/1933 [00:13<00:06, 107.90it/s]Loading qwen_image_2512_bf16.safetensors:  65%|██████▌   | 1260/1933 [00:13<00:07, 84.62it/s] Loading qwen_image_2512_bf16.safetensors:  66%|██████▌   | 1278/1933 [00:14<00:06, 102.96it/s]Loading qwen_image_2512_bf16.safetensors:  67%|██████▋   | 1291/1933 [00:14<00:07, 89.45it/s] Loading qwen_image_2512_bf16.safetensors:  68%|██████▊   | 1308/1933 [00:14<00:05, 105.73it/s]Loading qwen_image_2512_bf16.safetensors:  68%|██████▊   | 1321/1933 [00:14<00:06, 94.91it/s] Loading qwen_image_2512_bf16.safetensors:  69%|██████▉   | 1334/1933 [00:14<00:05, 101.73it/s]Loading qwen_image_2512_bf16.safetensors:  70%|██████▉   | 1348/1933 [00:14<00:05, 103.09it/s]Loading qwen_image_2512_bf16.safetensors:  70%|███████   | 1360/1933 [00:14<00:05, 97.31it/s] Loading qwen_image_2512_bf16.safetensors:  71%|███████▏  | 1380/1933 [00:14<00:04, 113.66it/s]Loading qwen_image_2512_bf16.safetensors:  72%|███████▏  | 1392/1933 [00:15<00:04, 111.79it/s]Loading qwen_image_2512_bf16.safetensors:  73%|███████▎  | 1408/1933 [00:15<00:04, 120.22it/s]Loading qwen_image_2512_bf16.safetensors:  74%|███████▎  | 1421/1933 [00:15<00:05, 93.52it/s] Loading qwen_image_2512_bf16.safetensors:  74%|███████▍  | 1440/1933 [00:15<00:04, 112.59it/s]Loading qwen_image_2512_bf16.safetensors:  75%|███████▌  | 1453/1933 [00:15<00:04, 107.05it/s]Loading qwen_image_2512_bf16.safetensors:  76%|███████▌  | 1470/1933 [00:15<00:03, 119.80it/s]Loading qwen_image_2512_bf16.safetensors:  77%|███████▋  | 1483/1933 [00:15<00:04, 97.03it/s] Loading qwen_image_2512_bf16.safetensors:  78%|███████▊  | 1502/1933 [00:16<00:03, 116.32it/s]Loading qwen_image_2512_bf16.safetensors:  78%|███████▊  | 1516/1933 [00:16<00:04, 97.47it/s] Loading qwen_image_2512_bf16.safetensors:  80%|███████▉  | 1538/1933 [00:16<00:03, 119.22it/s]Loading qwen_image_2512_bf16.safetensors:  80%|████████  | 1552/1933 [00:16<00:03, 105.51it/s]Loading qwen_image_2512_bf16.safetensors:  81%|████████  | 1568/1933 [00:16<00:03, 112.40it/s]Loading qwen_image_2512_bf16.safetensors:  82%|████████▏ | 1581/1933 [00:16<00:03, 91.09it/s] Loading qwen_image_2512_bf16.safetensors:  83%|████████▎ | 1598/1933 [00:17<00:03, 106.46it/s]Loading qwen_image_2512_bf16.safetensors:  83%|████████▎ | 1611/1933 [00:17<00:03, 88.19it/s] Loading qwen_image_2512_bf16.safetensors:  84%|████████▍ | 1630/1933 [00:17<00:02, 108.16it/s]Loading qwen_image_2512_bf16.safetensors:  85%|████████▍ | 1643/1933 [00:17<00:03, 88.99it/s] Loading qwen_image_2512_bf16.safetensors:  86%|████████▌ | 1664/1933 [00:17<00:02, 107.60it/s]Loading qwen_image_2512_bf16.safetensors:  87%|████████▋ | 1677/1933 [00:17<00:02, 95.84it/s] Loading qwen_image_2512_bf16.safetensors:  88%|████████▊ | 1696/1933 [00:18<00:02, 113.58it/s]Loading qwen_image_2512_bf16.safetensors:  88%|████████▊ | 1709/1933 [00:18<00:02, 100.31it/s]Loading qwen_image_2512_bf16.safetensors:  89%|████████▉ | 1728/1933 [00:18<00:01, 116.96it/s]Loading qwen_image_2512_bf16.safetensors:  90%|█████████ | 1742/1933 [00:18<00:01, 104.25it/s]Loading qwen_image_2512_bf16.safetensors:  91%|█████████ | 1761/1933 [00:18<00:01, 122.79it/s]Loading qwen_image_2512_bf16.safetensors:  92%|█████████▏| 1775/1933 [00:18<00:01, 107.44it/s]Loading qwen_image_2512_bf16.safetensors:  93%|█████████▎| 1792/1933 [00:18<00:01, 120.06it/s]Loading qwen_image_2512_bf16.safetensors:  93%|█████████▎| 1806/1933 [00:19<00:01, 105.44it/s]Loading qwen_image_2512_bf16.safetensors:  94%|█████████▍| 1825/1933 [00:19<00:00, 124.25it/s]Loading qwen_image_2512_bf16.safetensors:  95%|█████████▌| 1839/1933 [00:19<00:00, 106.26it/s]Loading qwen_image_2512_bf16.safetensors:  96%|█████████▌| 1858/1933 [00:19<00:00, 120.41it/s]Loading qwen_image_2512_bf16.safetensors:  97%|█████████▋| 1872/1933 [00:19<00:00, 108.22it/s]Loading qwen_image_2512_bf16.safetensors:  98%|█████████▊| 1890/1933 [00:19<00:00, 120.36it/s]Loading qwen_image_2512_bf16.safetensors:  98%|█████████▊| 1903/1933 [00:19<00:00, 109.66it/s]Loading qwen_image_2512_bf16.safetensors:  99%|█████████▉| 1922/1933 [00:19<00:00, 122.55it/s]                                                                                              INFO:musubi_tuner.qwen_image.qwen_image_model:Loaded DiT model from /workspace/models/qwen_image_2512_bf16.safetensors, info=<All keys matched successfully>
+import network module: networks.lora_qwen_image
+INFO:musubi_tuner.networks.lora:create LoRA network. base dim (rank): 32, alpha: 32
+INFO:musubi_tuner.networks.lora:neuron dropout: p=0.05, rank dropout: p=None, module dropout: p=None
+INFO:musubi_tuner.networks.lora:create LoRA for U-Net/DiT: 840 modules.
+INFO:musubi_tuner.networks.lora:enable LoRA for U-Net: 840 modules
+QwenModel: Gradient checkpointing enabled. Activation CPU offloading: False
+prepare optimizer, data loader etc.
+INFO:musubi_tuner.training.trainer_base:use 8-bit AdamW optimizer | {}
+running training / 学習開始
+  num train items / 学習画像、動画数: 2
+  num batches per epoch / 1epochのバッチ数: 2
+  num epochs / epoch数: 4
+  batch size per device / バッチサイズ: 1
+  gradient accumulation steps / 勾配を合計するステップ数 = 2
+  total optimization steps / 学習ステップ数: 4
+INFO:musubi_tuner.training.trainer_base:set DiT model name for metadata: /workspace/models/qwen_image_2512_bf16.safetensors
+INFO:musubi_tuner.training.trainer_base:set VAE model name for metadata: /workspace/models/qwen_image_vae.safetensors
+steps:   0%|          | 0/4 [00:00<?, ?it/s]INFO:musubi_tuner.training.trainer_base:network weights will be saved as torch.float32 (--save_precision fp32)
+INFO:musubi_tuner.dataset.datasources:glob images in /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/dataset/val
+INFO:musubi_tuner.dataset.datasources:found 1 images
+INFO:musubi_tuner.dataset.datasources:glob images in /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/dataset/val
+INFO:musubi_tuner.dataset.datasources:found 1 images
+INFO:tensorboard:No path found after /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/output-periodic/tensorboard/qwen_image_val_acceptance_periodic20261005165156183871/network_train/events.out.tfevents.1791219150.c30d3570eaf9.4429.0
+INFO:musubi_tuner.training.trainer_base:DiT dtype: torch.bfloat16, device: cuda:0
+
+epoch 1/4
+INFO:musubi_tuner.dataset.cache_io:epoch is incremented. current_epoch: 0, epoch: 1
+steps:   0%|          | 0/4 [00:04<?, ?it/s, avr_loss=0.159]steps:   0%|          | 0/4 [00:05<?, ?it/s, avr_loss=0.161]steps:   0%|          | 0/4 [00:00<?, ?it/s, avr_loss=0.161]
+epoch 2/4
+INFO:musubi_tuner.dataset.cache_io:epoch is incremented. current_epoch: 1, epoch: 2
+steps:  25%|██▌       | 1/4 [00:00<00:02,  1.09it/s, avr_loss=0.135]steps:  25%|██▌       | 1/4 [00:02<00:06,  2.13s/it, avr_loss=0.0935]steps:  50%|█████     | 2/4 [00:02<00:02,  1.07s/it, avr_loss=0.0935]INFO:musubi_tuner.dataset.datasources:glob images in /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/dataset/val
+INFO:musubi_tuner.dataset.datasources:found 1 images
+INFO:musubi_tuner.dataset.datasources:glob images in /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/dataset/val
+INFO:musubi_tuner.dataset.datasources:found 1 images
+INFO:tensorboard:No path found after /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/output-periodic/tensorboard/qwen_image_val_acceptance_periodic20261005165156183871/network_train/events.out.tfevents.1791219150.c30d3570eaf9.4429.0
+INFO:musubi_tuner.training.trainer_base:
+INFO:musubi_tuner.training.trainer_base:generating sample images at step / サンプル画像生成 ステップ: 2
+INFO:musubi_tuner.training.trainer_base:prompt: A large gold coin with a "₽" mark is in the center on an empty background.
+INFO:musubi_tuner.training.trainer_base:height: 256
+INFO:musubi_tuner.training.trainer_base:width: 256
+INFO:musubi_tuner.training.trainer_base:sample steps: 2
+INFO:musubi_tuner.training.trainer_base:discrete flow shift: 2.2
+INFO:musubi_tuner.training.trainer_base:seed: 42
+INFO:musubi_tuner.training.trainer_base:negative prompt:  
+INFO:musubi_tuner.training.trainer_base:cfg scale: 4.0
+
+Denoising steps:   0%|          | 0/2 [00:00<?, ?it/s][A
+Denoising steps:  50%|█████     | 1/2 [00:00<00:00,  3.65it/s][A
+Denoising steps: 100%|██████████| 2/2 [00:00<00:00,  3.80it/s][ADenoising steps: 100%|██████████| 2/2 [00:00<00:00,  3.76it/s]
+INFO:musubi_tuner.qwen_image_train_network:Decoding image from latents: torch.Size([1, 16, 1, 32, 32])
+INFO:musubi_tuner.qwen_image_train_network:Decoding complete
+
+saving checkpoint: /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/output-periodic/qwen_image_val_acceptance-step2/model.safetensors
+INFO:accelerate.accelerator:Saving current state to /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/output-periodic/qwen_image_val_acceptance-step2
+steps:  50%|█████     | 2/4 [00:20<00:20, 10.02s/it, avr_loss=0.0935]INFO:accelerate.checkpointing:Optimizer state saved in /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/output-periodic/qwen_image_val_acceptance-step2/optimizer.bin
+INFO:accelerate.checkpointing:Scheduler state saved in /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/output-periodic/qwen_image_val_acceptance-step2/scheduler.bin
+INFO:accelerate.checkpointing:Sampler state for dataloader 0 saved in /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/output-periodic/qwen_image_val_acceptance-step2/sampler.bin
+INFO:accelerate.checkpointing:Random states saved in /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/output-periodic/qwen_image_val_acceptance-step2/random_states_0.pkl
+
+epoch 3/4
+INFO:musubi_tuner.dataset.cache_io:epoch is incremented. current_epoch: 2, epoch: 3
+steps:  50%|█████     | 2/4 [00:33<00:33, 16.63s/it, avr_loss=0.128] steps:  50%|█████     | 2/4 [00:34<00:34, 17.17s/it, avr_loss=0.125]steps:  75%|███████▌  | 3/4 [00:34<00:11, 11.45s/it, avr_loss=0.125]
+epoch 4/4
+INFO:musubi_tuner.dataset.cache_io:epoch is incremented. current_epoch: 3, epoch: 4
+steps:  75%|███████▌  | 3/4 [00:35<00:11, 11.81s/it, avr_loss=0.0839]steps:  75%|███████▌  | 3/4 [00:36<00:12, 12.12s/it, avr_loss=0.0998]steps: 100%|██████████| 4/4 [00:36<00:00,  9.09s/it, avr_loss=0.0998]INFO:musubi_tuner.dataset.datasources:glob images in /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/dataset/val
+INFO:musubi_tuner.dataset.datasources:found 1 images
+INFO:musubi_tuner.dataset.datasources:glob images in /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/dataset/val
+INFO:musubi_tuner.dataset.datasources:found 1 images
+INFO:tensorboard:No path found after /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/output-periodic/tensorboard/qwen_image_val_acceptance_periodic20261005165156183871/network_train/events.out.tfevents.1791219150.c30d3570eaf9.4429.0
+INFO:musubi_tuner.training.trainer_base:
+INFO:musubi_tuner.training.trainer_base:generating sample images at step / サンプル画像生成 ステップ: 4
+INFO:musubi_tuner.training.trainer_base:prompt: A large gold coin with a "₽" mark is in the center on an empty background.
+INFO:musubi_tuner.training.trainer_base:height: 256
+INFO:musubi_tuner.training.trainer_base:width: 256
+INFO:musubi_tuner.training.trainer_base:sample steps: 2
+INFO:musubi_tuner.training.trainer_base:discrete flow shift: 2.2
+INFO:musubi_tuner.training.trainer_base:seed: 42
+INFO:musubi_tuner.training.trainer_base:negative prompt:  
+INFO:musubi_tuner.training.trainer_base:cfg scale: 4.0
+
+Denoising steps:   0%|          | 0/2 [00:00<?, ?it/s][A
+Denoising steps:  50%|█████     | 1/2 [00:00<00:00,  3.64it/s][A
+Denoising steps: 100%|██████████| 2/2 [00:00<00:00,  3.60it/s][ADenoising steps: 100%|██████████| 2/2 [00:00<00:00,  3.59it/s]
+INFO:musubi_tuner.qwen_image_train_network:Decoding image from latents: torch.Size([1, 16, 1, 32, 32])
+INFO:musubi_tuner.qwen_image_train_network:Decoding complete
+
+saving checkpoint: /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/output-periodic/qwen_image_val_acceptance-step4/model.safetensors
+INFO:accelerate.accelerator:Saving current state to /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/output-periodic/qwen_image_val_acceptance-step4
+INFO:accelerate.checkpointing:Optimizer state saved in /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/output-periodic/qwen_image_val_acceptance-step4/optimizer.bin
+INFO:accelerate.checkpointing:Scheduler state saved in /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/output-periodic/qwen_image_val_acceptance-step4/scheduler.bin
+INFO:accelerate.checkpointing:Sampler state for dataloader 0 saved in /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/output-periodic/qwen_image_val_acceptance-step4/sampler.bin
+INFO:accelerate.checkpointing:Random states saved in /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/output-periodic/qwen_image_val_acceptance-step4/random_states_0.pkl
+steps: 100%|██████████| 4/4 [01:04<00:00, 16.04s/it, avr_loss=0.0998]
