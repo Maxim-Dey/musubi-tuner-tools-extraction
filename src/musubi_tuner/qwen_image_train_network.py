@@ -40,6 +40,9 @@ class QwenImageNetworkTrainer(NetworkTrainer):
 
     def validate_training_inputs(self, args):
         validate_training_args(args)
+        from musubi_tuner.training.auto_cache import prepare_missing_caches
+
+        prepare_missing_caches(args)
 
     def validate_training_dataset(self, args, dataset):
         source = getattr(args, "_config_source", "CLI")
@@ -360,6 +363,12 @@ class QwenImageNetworkTrainer(NetworkTrainer):
 
 def qwen_image_setup_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     """Qwen-Image specific parser setup"""
+    cache = parser.add_mutually_exclusive_group()
+    cache.add_argument(
+        "--auto_cache", action="store_true", help="Prepare missing caches before single-process experiment-mode training"
+    )
+    cache.add_argument("--no_auto_cache", dest="auto_cache", action="store_false", help="Use manually prepared caches")
+    parser.set_defaults(auto_cache=False)
     parser.add_argument("--fp8_scaled", action="store_true", help="use scaled fp8 for DiT / DiTにスケーリングされたfp8を使う")
     parser.add_argument("--text_encoder", type=str, default=None, help="text encoder (Qwen2.5-VL) checkpoint path")
     parser.add_argument("--fp8_vl", action="store_true", help="use fp8 for Text Encoder model")

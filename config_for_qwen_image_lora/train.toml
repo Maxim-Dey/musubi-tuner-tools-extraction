@@ -1,6 +1,3 @@
-# Relative paths resolve from this file; dataset paths resolve from their own TOML.
-experiment_mode = true
-
 # Model weights. Replace these three absolute paths with files on the training server.
 # Use the original BF16 Qwen-Image DiT, not a preconverted FP8 checkpoint.
 dit = "/workspace/models/qwen_image_2512_bf16.safetensors"
@@ -8,6 +5,11 @@ vae = "/workspace/models/qwen_image_vae.safetensors"
 text_encoder = "/workspace/models/qwen_2.5_vl_7b.safetensors"
 # resume = "<folder path for the saved training state folder for resuming training>"
 model_version = "original"
+
+# Relative paths resolve from this file; dataset paths resolve from their own TOML.
+experiment_mode = true
+# Prepare missing train/val caches before loading the training model.
+auto_cache = true
 
 # Output directory
 output_dir = "output"
@@ -67,6 +69,9 @@ gradient_checkpointing = true
 # Timesteps and loss. The shift controls training timesteps; fixed validation levels do not use it.
 timestep_sampling = "shift"
 discrete_flow_shift = 2.2
+min_timestep = 0
+max_timestep = 1000
+preserve_distribution_shape = true
 weighting_scheme = "none"
 
 # Data loader

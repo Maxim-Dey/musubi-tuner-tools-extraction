@@ -30,6 +30,7 @@ def test_all_training_template_values_and_cli_precedence(tmp_path, monkeypatch):
     config = toml.load(TEMPLATES / "train.toml")
     expected = dict(
         experiment_mode=True,
+        auto_cache=True,
         dit="/workspace/models/qwen_image_2512_bf16.safetensors",
         vae="/workspace/models/qwen_image_vae.safetensors",
         text_encoder="/workspace/models/qwen_2.5_vl_7b.safetensors",
@@ -73,6 +74,9 @@ def test_all_training_template_values_and_cli_precedence(tmp_path, monkeypatch):
         gradient_checkpointing=True,
         timestep_sampling="shift",
         discrete_flow_shift=2.2,
+        min_timestep=0,
+        max_timestep=1000,
+        preserve_distribution_shape=True,
         weighting_scheme="none",
         max_data_loader_n_workers=2,
         persistent_data_loader_workers=True,

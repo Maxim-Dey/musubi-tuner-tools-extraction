@@ -1,4 +1,4 @@
-"""Strict, source-linked Qwen validation caches, with no training-time encoding."""
+"""Source-linked Qwen cache inspection and fixed validation inputs; no encoding."""
 
 import argparse
 from dataclasses import asdict, dataclass
@@ -78,7 +78,15 @@ class ValidationRecord:
         }
 
 
-def _source_records(datasets, source, validation=False):
+@dataclass(frozen=True)
+class CacheInventory:
+    dataset_config: str
+    validation: bool
+    missing_latents: tuple[str, ...]
+    missing_text: tuple[str, ...]
+
+
+def _source_records(datasets, source, validation=False, require_all_sources=False):
     records = []
     cache_paths = set()
     for dataset_number, dataset in enumerate(datasets, 1):
@@ -87,14 +95,12 @@ def _source_records(datasets, source, validation=False):
             for key in ("batch_size", "num_repeats"):
                 if getattr(dataset, key) != 1:
                     raise ValueError(f"{label}: {key} must be 1 for validation; correct the dataset configuration")
-            if dataset.image_directory:
-                selected = {str(Path(path).resolve()) for path in dataset.datasource.image_paths}
-                declared = {str(Path(path).resolve()) for path in glob_images(dataset.image_directory)}
-                missing = declared - selected
-                if missing:
-                    raise ValueError(
-                        f"{label}: missing caption for validation image {sorted(missing)[0]}; provide a matching caption file"
-                    )
+        if (validation or require_all_sources) and dataset.image_directory:
+            selected = {str(Path(path).resolve()) for path in dataset.datasource.image_paths}
+            declared = {str(Path(path).resolve()) for path in glob_images(dataset.image_directory)}
+            missing = declared - selected
+            if missing:
+                raise ValueError(f"{label}: missing caption for image {sorted(missing)[0]}; provide a matching caption file")
         if len(dataset.datasource) == 0:
             raise ValueError(f"{label}: empty effective image set; provide images with captions")
         for index in range(len(dataset.datasource)):
@@ -185,32 +191,86 @@ def validate_cache_dataset(group, args):
                     _validate_cache(record, path, latent)
 
 
-def _build_records(args, train_group):
-    val_args = argparse.Namespace(**vars(args))
-    val_args.dataset_config = args.val_dataset_config
-    declaration = config_utils.load_user_config(args.val_dataset_config)
-    blueprint = config_utils.BlueprintGenerator(config_utils.ConfigSanitizer()).generate(declaration, val_args, architecture="qi")
-    # Bypass DatasetGroup's random seed: these datasets never shuffle or prepare train buckets.
+def _load_source_datasets(args, dataset_config):
+    source_args = argparse.Namespace(**vars(args))
+    source_args.dataset_config = dataset_config
+    declaration = config_utils.load_user_config(dataset_config)
+    blueprint = config_utils.BlueprintGenerator(config_utils.ConfigSanitizer()).generate(
+        declaration, source_args, architecture="qi"
+    )
+    # Bypass DatasetGroup's random seed and preparation from existing cache files.
     datasets = [ImageDataset(**asdict(item.params)) for item in blueprint.dataset_group.datasets]
-    config_utils.validate_dataset_sources(argparse.Namespace(datasets=datasets), args.val_dataset_config)
-    train_records = _source_records(train_group.datasets, args.dataset_config)
-    records = _source_records(datasets, args.val_dataset_config, validation=True)
+    config_utils.validate_dataset_sources(argparse.Namespace(datasets=datasets), dataset_config)
+    return datasets
+
+
+def _validate_source_pair(train_datasets, val_datasets, train_records, records, source):
     train_hashes = {record.image_sha256 for record in train_records}
     val_hashes = {record.image_sha256 for record in records}
     overlap = train_hashes & val_hashes
     if overlap:
-        raise ValueError(
-            f"{args.val_dataset_config}: train/val image SHA-256 overlap {sorted(overlap)[0]}; provide independent val images"
-        )
+        raise ValueError(f"{source}: train/val image SHA-256 overlap {sorted(overlap)[0]}; provide independent val images")
     if len(val_hashes) != len(records):
-        raise ValueError(f"{args.val_dataset_config}: duplicate validation image contents; keep each image once")
-    directories = [Path(dataset.cache_directory).resolve() for dataset in train_group.datasets + datasets]
+        raise ValueError(f"{source}: duplicate validation image contents; keep each image once")
+    directories = [Path(dataset.cache_directory).resolve() for dataset in train_datasets + val_datasets]
     for index, directory in enumerate(directories):
         for other in directories[index + 1 :]:
             if directory == other or directory in other.parents or other in directory.parents:
+                raise ValueError(f"{source}: overlapping cache directories {directory} and {other}; use separate train/val caches")
+
+
+def inspect_cache_inputs(args) -> tuple[CacheInventory, ...]:
+    """Read every required source/cache pair before automatic preparation; never write files."""
+    declarations = [(str(Path(args.dataset_config).resolve()), False)]
+    if getattr(args, "val_dataset_config", None):
+        declarations.append((str(Path(args.val_dataset_config).resolve()), True))
+    sources = []
+    for dataset_config, validation in declarations:
+        datasets = _load_source_datasets(args, dataset_config)
+        records = _source_records(datasets, dataset_config, validation=validation, require_all_sources=True)
+        sources.append((datasets, records))
+    train_datasets, train_records = sources[0]
+    val_datasets, val_records = sources[1] if len(sources) == 2 else ([], [])
+    _validate_source_pair(train_datasets, val_datasets, train_records, val_records, declarations[-1][0])
+
+    expected_train = {str(Path(record.item.latent_cache_path).resolve()) for record in train_records}
+    for dataset in train_datasets:
+        for path in dataset.get_all_latent_cache_files():
+            if str(Path(path).resolve()) not in expected_train:
                 raise ValueError(
-                    f"{args.val_dataset_config}: overlapping cache directories {directory} and {other}; use separate train/val caches"
+                    f"{declarations[0][0]}: unexpected training latent cache {path}; move it out of the cache directory or correct sources"
                 )
+
+    inventory = []
+    for (dataset_config, validation), (_, records) in zip(declarations, sources):
+        missing_latents, missing_text = [], []
+        for record in records:
+            for name, latent, missing in (
+                (record.item.latent_cache_path, True, missing_latents),
+                (record.item.text_encoder_output_cache_path, False, missing_text),
+            ):
+                path = Path(name)
+                if not path.exists() and not path.is_symlink():
+                    missing.append(str(path.absolute()))
+                    continue
+                role, stage = ("val" if validation else "train"), ("latent" if latent else "text")
+                if not path.is_file():
+                    raise ValueError(
+                        f"{dataset_config}: {role} {stage} cache {path}: expected a regular file; remove the invalid path before retrying"
+                    )
+                try:
+                    _validate_cache(record, path, latent)
+                except ValueError as error:
+                    raise ValueError(f"{dataset_config}: {role} {stage} cache: {error}") from error
+        inventory.append(CacheInventory(dataset_config, validation, tuple(sorted(missing_latents)), tuple(sorted(missing_text))))
+    return tuple(inventory)
+
+
+def _build_records(args, train_group):
+    datasets = _load_source_datasets(args, args.val_dataset_config)
+    train_records = _source_records(train_group.datasets, args.dataset_config)
+    records = _source_records(datasets, args.val_dataset_config, validation=True)
+    _validate_source_pair(train_group.datasets, datasets, train_records, records, args.val_dataset_config)
     expected_train = {str(Path(record.item.latent_cache_path).resolve()): record for record in train_records}
     effective_count = 0
     verified_train = set()
