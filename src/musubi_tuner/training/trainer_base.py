@@ -10,6 +10,7 @@ import sys
 import random
 import time
 import json
+import itertools
 from dataclasses import dataclass, field
 from multiprocessing import Value
 from typing import Any, List, Optional
@@ -21,7 +22,7 @@ import toml
 
 import torch
 from tqdm import tqdm
-from accelerate.utils import set_seed
+from accelerate.utils import set_seed, broadcast_object_list
 from accelerate import Accelerator, PartialState
 from safetensors.torch import load_file
 import transformers
@@ -895,7 +896,12 @@ class NetworkTrainer:
         transformer.switch_block_swap_for_inference()
 
         # Create a directory to save the samples
-        save_dir = os.path.join(args.output_dir, "sample")
+        if getattr(args, "experiment_mode", False):
+            from musubi_tuner.training.experiment_state import checkpoint_directory
+
+            save_dir = str(checkpoint_directory(args, steps) / "samples")
+        else:
+            save_dir = os.path.join(args.output_dir, "sample")
         os.makedirs(save_dir, exist_ok=True)
 
         # save random state to restore later
@@ -1198,6 +1204,7 @@ class NetworkTrainer:
         dit_dtype: torch.dtype,
         network_dtype: torch.dtype,
         global_step: int,
+        fixed_sigmas: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, dict[str, float]]:
         """Reduce a ``DiTOutput`` to a scalar loss + per-step metrics dict.
 
@@ -1213,7 +1220,9 @@ class NetworkTrainer:
         populate with named scalars for loss-decomposition logging
         (e.g. ``{"loss/gen": ..., "loss/rep": ...}``).
         """
-        weighting = compute_loss_weighting_for_sd3(args.weighting_scheme, noise_scheduler, timesteps, timesteps.device, dit_dtype)
+        weighting = compute_loss_weighting_for_sd3(
+            args.weighting_scheme, noise_scheduler, timesteps, timesteps.device, dit_dtype, fixed_sigmas=fixed_sigmas
+        )
         loss = torch.nn.functional.mse_loss(output.pred.to(network_dtype), output.target, reduction="none")
         if weighting is not None:
             loss = loss * weighting
@@ -1397,6 +1406,11 @@ class NetworkTrainer:
         session_id, training_started_at = self._init_session(args)
         train_dataset_group, collator, current_epoch = self._build_dataset(args)
         self.validate_training_dataset(args, train_dataset_group)
+        if getattr(args, "experiment_mode", False) or getattr(args, "val_dataset_config", None):
+            from musubi_tuner.training.experiment_state import prepare_training_state
+
+            inputs = getattr(self, "validation_inputs", None)
+            prepare_training_state(args, inputs.fingerprint if inputs is not None else None)
         accelerator, weight_dtype, dit_dtype, dit_weight_dtype, vae_dtype = self._prepare_accelerator_and_dtypes(args)
         sample_parameters, sample_resources = self.prepare_sampling(args, accelerator, vae_dtype)
         transformer = self._load_dit_and_swap(args, accelerator, dit_weight_dtype)
@@ -1773,11 +1787,23 @@ class NetworkTrainer:
         return transformer, network, optimizer, train_dataloader, lr_scheduler, training_model, network_dtype
 
     def _register_hooks_and_resume(self, args, accelerator, network):
+        if getattr(args, "experiment_mode", False):
+            from musubi_tuner.training.experiment_state import register_experiment_hooks
+
+            register_experiment_hooks(args, accelerator, network, args._training_state)
+            self.resume_from_local_or_hf_if_specified(accelerator, args)
+            return
+
         # before resuming make hook for saving/loading to save/load the network weights only
         def save_model_hook(models, weights, output_dir):
             # pop weights of other models than network to save only network weights
             # only main process or deepspeed https://github.com/huggingface/diffusers/issues/2606
             if accelerator.is_main_process:  # or args.deepspeed:
+                if getattr(args, "_training_state", None) is not None:
+                    from musubi_tuner.training.experiment_state import flush_trackers, save_training_state
+
+                    flush_trackers(accelerator)
+                    save_training_state(output_dir, args._training_state)
                 remove_indices = []
                 for i, model in enumerate(models):
                     if not isinstance(model, type(accelerator.unwrap_model(network))):
@@ -1828,6 +1854,9 @@ class NetworkTrainer:
         network_dtype,
     ):
         is_main_process = accelerator.is_main_process
+        training_state = getattr(args, "_training_state", None)
+        new_step_mode = training_state is not None
+        experiment_mode = getattr(args, "experiment_mode", False)
 
         self.on_train_start(args, accelerator, network, transformer, optimizer)
 
@@ -1949,17 +1978,28 @@ class NetworkTrainer:
                 init_kwargs["wandb"] = {"name": args.wandb_run_name}
             if args.log_tracker_config is not None:
                 init_kwargs = toml.load(args.log_tracker_config)
+            tracker_name = "network_train" if args.log_tracker_name is None else args.log_tracker_name
+            if new_step_mode:
+                from musubi_tuner.training.experiment_state import tracker_init
+
+                tracker_name, init_kwargs = tracker_init(args, training_state, init_kwargs)
             accelerator.init_trackers(
-                "network_train" if args.log_tracker_name is None else args.log_tracker_name,
+                tracker_name,
                 config=train_utils.get_sanitized_config_or_none(args),
                 init_kwargs=init_kwargs,
             )
 
         # TODO skip until initial step
-        progress_bar = tqdm(range(args.max_train_steps), smoothing=0, disable=not accelerator.is_local_main_process, desc="steps")
+        global_step = training_state["optimizer_global_step"] if new_step_mode else 0
+        progress_bar = tqdm(
+            total=args.max_train_steps,
+            initial=global_step,
+            smoothing=0,
+            disable=not accelerator.is_local_main_process,
+            desc="steps",
+        )
 
         epoch_to_start = 0
-        global_step = 0
         noise_scheduler = FlowMatchDiscreteScheduler(shift=args.discrete_flow_shift, reverse=True, solver="euler")
 
         loss_recorder = train_utils.LossRecorder()
@@ -1974,7 +2014,11 @@ class NetworkTrainer:
             + (f" (--save_precision {args.save_precision})" if args.save_precision is not None else " (default)")
         )
 
-        def save_model(ckpt_name: str, unwrapped_nw, steps, epoch_no, force_sync_upload=False):
+        saved_experiment_steps = {}
+
+        def save_model(ckpt_name: str, unwrapped_nw, steps, epoch_no, force_sync_upload=False, with_state=False):
+            if experiment_mode and steps in saved_experiment_steps and (saved_experiment_steps[steps] or not with_state):
+                return
             os.makedirs(args.output_dir, exist_ok=True)
             ckpt_file = os.path.join(args.output_dir, ckpt_name)
 
@@ -2012,11 +2056,24 @@ class NetworkTrainer:
 
             metadata_to_save.update(sai_metadata)
 
-            unwrapped_nw.save_weights(ckpt_file, save_dtype, metadata_to_save)
-            if args.huggingface_repo_id is not None:
+            if experiment_mode:
+                from musubi_tuner.training.experiment_state import save_experiment_checkpoint
+
+                ckpt_file = str(
+                    save_experiment_checkpoint(args, accelerator, unwrapped_nw, training_state, metadata_to_save, with_state)
+                    / "model.safetensors"
+                )
+                ckpt_name = os.path.relpath(ckpt_file, args.output_dir)
+                saved_experiment_steps[steps] = with_state
+            else:
+                unwrapped_nw.save_weights(ckpt_file, save_dtype, metadata_to_save)
+            if accelerator.is_main_process and args.huggingface_repo_id is not None:
                 huggingface_utils.upload(args, ckpt_file, "/" + ckpt_name, force_sync_upload=force_sync_upload)
 
-            self.on_post_save(args, accelerator, network, transformer, ckpt_name, save_dtype, metadata_to_save, force_sync_upload)
+            if accelerator.is_main_process:
+                self.on_post_save(
+                    args, accelerator, network, transformer, ckpt_name, save_dtype, metadata_to_save, force_sync_upload
+                )
 
         def remove_model(old_ckpt_name):
             old_ckpt_file = os.path.join(args.output_dir, old_ckpt_name)
@@ -2024,8 +2081,12 @@ class NetworkTrainer:
                 accelerator.print(f"removing old checkpoint: {old_ckpt_file}")
                 os.remove(old_ckpt_file)
 
+        sampled_steps = set()
+
         def _do_sample(epoch_arg, steps_arg):
             if not should_sample_images(args, steps_arg, epoch_arg):
+                return
+            if experiment_mode and steps_arg in sampled_steps:
                 return
             self.on_before_sample_images(
                 accelerator, args, epoch_arg, steps_arg, sample_resources, transformer, network, sample_parameters, dit_dtype
@@ -2034,10 +2095,79 @@ class NetworkTrainer:
                 self.sample_images(
                     accelerator, args, epoch_arg, steps_arg, sample_resources, transformer, sample_parameters, dit_dtype
                 )
+                sampled_steps.add(steps_arg)
             finally:
                 self.on_after_sample_images(
                     accelerator, args, epoch_arg, steps_arg, sample_resources, transformer, network, sample_parameters, dit_dtype
                 )
+
+        last_validation_step = None
+
+        def _do_validation():
+            nonlocal last_validation_step
+            inputs = getattr(self, "validation_inputs", None)
+            if inputs is None or last_validation_step == global_step:
+                return
+            from musubi_tuner.training.validation import evaluate_validation, preserve_rng_state
+            from musubi_tuner.training.experiment_state import (
+                adapter_identity,
+                flush_trackers,
+                pending_validation_events,
+                record_validation,
+                saved_validation_metrics,
+                validation_events_complete,
+            )
+
+            # Ledger reads/writes and cache verification are part of the isolated path too.
+            with preserve_rng_state():
+                identity = adapter_identity(accelerator.unwrap_model(network))
+                decision = [None]
+                if accelerator.is_main_process:
+                    try:
+                        inputs.verify_unchanged()
+                        decision[0] = {
+                            "complete": validation_events_complete(training_state, global_step, identity),
+                            "saved_metrics": saved_validation_metrics(training_state, global_step, identity),
+                        }
+                    except Exception as error:
+                        decision[0] = {"error": str(error)}
+                broadcast_object_list(decision)
+                if "error" in decision[0]:
+                    raise ValueError(decision[0]["error"])
+                if not decision[0]["complete"]:
+                    metrics = decision[0]["saved_metrics"]
+                    if metrics is None:
+                        result = evaluate_validation(
+                            self,
+                            args,
+                            accelerator,
+                            transformer,
+                            network,
+                            inputs,
+                            noise_scheduler,
+                            dit_dtype,
+                            network_dtype,
+                            global_step,
+                        )
+                        metrics = result.metrics
+                    status = [None]
+                    if accelerator.is_main_process:
+                        try:
+                            missing = pending_validation_events(training_state, global_step, metrics, identity)
+                            if missing:
+                                accelerator.log(missing, step=global_step)
+                            flush_trackers(accelerator)
+                            record_validation(training_state, global_step, metrics, identity)
+                            status[0] = {"result": training_state["last_validation"]}
+                        except Exception as error:
+                            status[0] = {"error": str(error)}
+                    broadcast_object_list(status)
+                    if "error" in status[0]:
+                        raise ValueError(status[0]["error"])
+                    training_state["last_validation"] = status[0]["result"]
+                last_validation_step = global_step
+
+        _do_validation()
 
         # For --sample_at_first
         if should_sample_images(args, global_step, epoch=0):
@@ -2046,7 +2176,7 @@ class NetworkTrainer:
             optimizer_train_fn()
         if len(accelerator.trackers) > 0:
             # log empty object to commit the sample images to wandb
-            accelerator.log({}, step=0)
+            accelerator.log({}, step=global_step if new_step_mode else 0)
 
         # training loop
 
@@ -2061,7 +2191,10 @@ class NetworkTrainer:
 
         optimizer_train_fn()  # Set training mode
 
-        for epoch in range(epoch_to_start, num_train_epochs):
+        epochs = itertools.count(epoch_to_start) if new_step_mode else range(epoch_to_start, num_train_epochs)
+        for epoch in epochs:
+            if new_step_mode and global_step >= args.max_train_steps:
+                break
             accelerator.print(f"\nepoch {epoch + 1}/{num_train_epochs}")
             current_epoch.value = epoch + 1
 
@@ -2128,54 +2261,85 @@ class NetworkTrainer:
                 else:
                     keys_scaled, mean_norm, maximum_norm = None, None, None
 
+                current_loss = loss.detach().item()
+                loss_recorder.add(epoch=epoch, step=step, loss=current_loss)
+                avr_loss: float = loss_recorder.moving_average
+                logs = {"avr_loss": avr_loss}
+                progress_bar.set_postfix(**logs)
+                if args.scale_weight_norms:
+                    progress_bar.set_postfix(**{**max_mean_logs, **logs})
+
+                def log_training_step():
+                    if len(accelerator.trackers) > 0:
+                        step_logs = self.generate_step_logs(
+                            args,
+                            current_loss,
+                            avr_loss,
+                            lr_scheduler,
+                            lr_descriptions,
+                            optimizer,
+                            keys_scaled,
+                            mean_norm,
+                            maximum_norm,
+                        )
+                        step_logs.update(loss_metrics)
+                        step_logs.update(grad_metrics)
+                        step_logs.update(self.extra_step_logs(args, step_logs))
+                        accelerator.log(step_logs, step=global_step)
+
                 # Checks if the accelerator has performed an optimization step behind the scenes
-                if accelerator.sync_gradients:
+                completed_update = accelerator.sync_gradients and (not new_step_mode or not accelerator.optimizer_step_was_skipped)
+                if completed_update:
                     if global_step == 0:
                         progress_bar.reset()  # exclude first step from progress bar, because it may take long due to initializations
                     progress_bar.update(1)
                     global_step += 1
+                    if new_step_mode:
+                        training_state["optimizer_global_step"] = global_step
+                        log_training_step()
+                        if getattr(args, "val_dataset_config", None) and global_step % args.val_every_n_steps == 0:
+                            _do_validation()
 
                     # to avoid calling optimizer_eval_fn() too frequently, we call it only when we need to sample images or save the model
                     should_sampling = should_sample_images(args, global_step, epoch=None)
                     should_saving = args.save_every_n_steps is not None and global_step % args.save_every_n_steps == 0
 
                     if should_sampling or should_saving:
-                        optimizer_eval_fn()
+                        if not new_step_mode or should_sampling:
+                            optimizer_eval_fn()
                         if should_sampling:
                             _do_sample(None, global_step)
+                        if new_step_mode:
+                            optimizer_train_fn()
 
                         if should_saving:
                             accelerator.wait_for_everyone()
-                            if accelerator.is_main_process:
+                            if experiment_mode:
+                                save_model(
+                                    f"{args.output_name}-step{global_step}/model.safetensors",
+                                    accelerator.unwrap_model(network),
+                                    global_step,
+                                    epoch,
+                                    with_state=args.save_state,
+                                )
+                            elif accelerator.is_main_process:
                                 ckpt_name = train_utils.get_step_ckpt_name(args.output_name, global_step)
                                 save_model(ckpt_name, accelerator.unwrap_model(network), global_step, epoch)
 
-                                if args.save_state:
+                                if args.save_state and not new_step_mode:
                                     train_utils.save_and_remove_state_stepwise(args, accelerator, global_step)
 
                                 remove_step_no = train_utils.get_remove_step_no(args, global_step)
                                 if remove_step_no is not None:
                                     remove_ckpt_name = train_utils.get_step_ckpt_name(args.output_name, remove_step_no)
                                     remove_model(remove_ckpt_name)
-                        optimizer_train_fn()
+                            if args.save_state and new_step_mode and not experiment_mode:
+                                train_utils.save_and_remove_state_stepwise(args, accelerator, global_step)
+                        if not new_step_mode:
+                            optimizer_train_fn()
 
-                current_loss = loss.detach().item()
-                loss_recorder.add(epoch=epoch, step=step, loss=current_loss)
-                avr_loss: float = loss_recorder.moving_average
-                logs = {"avr_loss": avr_loss}  # , "lr": lr_scheduler.get_last_lr()[0]}
-                progress_bar.set_postfix(**logs)
-
-                if args.scale_weight_norms:
-                    progress_bar.set_postfix(**{**max_mean_logs, **logs})
-
-                if len(accelerator.trackers) > 0:
-                    logs = self.generate_step_logs(
-                        args, current_loss, avr_loss, lr_scheduler, lr_descriptions, optimizer, keys_scaled, mean_norm, maximum_norm
-                    )
-                    logs.update(loss_metrics)
-                    logs.update(grad_metrics)
-                    logs.update(self.extra_step_logs(args, logs))
-                    accelerator.log(logs, step=global_step)
+                if not new_step_mode:
+                    log_training_step()
 
                 if global_step >= args.max_train_steps:
                     break
@@ -2184,15 +2348,24 @@ class NetworkTrainer:
 
             if len(accelerator.trackers) > 0:
                 logs = {"loss/epoch": loss_recorder.moving_average}
-                accelerator.log(logs, step=epoch + 1)
+                accelerator.log(logs, step=global_step if new_step_mode else epoch + 1)
 
             accelerator.wait_for_everyone()
 
             # save model at the end of epoch if needed
-            optimizer_eval_fn()
+            if not new_step_mode:
+                optimizer_eval_fn()
             if args.save_every_n_epochs is not None:
                 saving = (epoch + 1) % args.save_every_n_epochs == 0 and (epoch + 1) < num_train_epochs
-                if is_main_process and saving:
+                if experiment_mode and saving:
+                    save_model(
+                        f"{args.output_name}-step{global_step}/model.safetensors",
+                        accelerator.unwrap_model(network),
+                        global_step,
+                        epoch + 1,
+                        with_state=args.save_state,
+                    )
+                elif is_main_process and saving:
                     ckpt_name = train_utils.get_epoch_ckpt_name(args.output_name, epoch + 1)
                     save_model(ckpt_name, accelerator.unwrap_model(network), global_step, epoch + 1)
 
@@ -2201,28 +2374,44 @@ class NetworkTrainer:
                         remove_ckpt_name = train_utils.get_epoch_ckpt_name(args.output_name, remove_epoch_no)
                         remove_model(remove_ckpt_name)
 
-                    if args.save_state:
+                    if args.save_state and not new_step_mode:
                         train_utils.save_and_remove_state_on_epoch_end(args, accelerator, epoch + 1)
+                if new_step_mode and not experiment_mode and saving and args.save_state:
+                    train_utils.save_and_remove_state_on_epoch_end(args, accelerator, epoch + 1)
 
+            if new_step_mode:
+                optimizer_eval_fn()
             _do_sample(epoch + 1, global_step)
             optimizer_train_fn()
 
             # end of epoch
 
+        _do_validation()
         # metadata["ss_epoch"] = str(num_train_epochs)
         metadata["ss_training_finished_at"] = str(time.time())
 
         if is_main_process:
             network = accelerator.unwrap_model(network)
 
-        accelerator.end_training()
-        optimizer_eval_fn()
+        if not new_step_mode:
+            optimizer_eval_fn()
 
-        if is_main_process and (args.save_state or args.save_state_on_train_end):
+        if experiment_mode:
+            save_model(
+                f"{args.output_name}-step{global_step}/model.safetensors",
+                accelerator.unwrap_model(network),
+                global_step,
+                num_train_epochs,
+                force_sync_upload=True,
+                with_state=args.save_state or args.save_state_on_train_end,
+            )
+        elif (is_main_process or new_step_mode) and (args.save_state or args.save_state_on_train_end):
             train_utils.save_state_on_train_end(args, accelerator)
 
-        if is_main_process:
+        if is_main_process and not experiment_mode:
             ckpt_name = train_utils.get_last_ckpt_name(args.output_name)
             save_model(ckpt_name, network, global_step, num_train_epochs, force_sync_upload=True)
 
             logger.info("model saved.")
+
+        accelerator.end_training()

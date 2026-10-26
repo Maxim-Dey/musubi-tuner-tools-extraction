@@ -1,0 +1,96 @@
+[
+  {
+    "name": "cache-latents-train",
+    "command": [
+      "/workspace/codex-val-loss-20261005-6da0266c/.venv/bin/python",
+      "/workspace/codex-val-loss-20261005-6da0266c/qwen_image_cache_latents.py",
+      "--dataset_config",
+      "/workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/train-dataset.toml",
+      "--experiment_mode",
+      "--model_version",
+      "original",
+      "--batch_size",
+      "1",
+      "--num_workers",
+      "1",
+      "--device",
+      "cuda",
+      "--vae",
+      "/workspace/models/qwen_image_vae.safetensors"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 70.73470187187195,
+    "log": "/workspace/codex-val-loss-20261005-6da0266c/evidence/cache-latents-train.log"
+  },
+  {
+    "name": "cache-latents-val",
+    "command": [
+      "/workspace/codex-val-loss-20261005-6da0266c/.venv/bin/python",
+      "/workspace/codex-val-loss-20261005-6da0266c/qwen_image_cache_latents.py",
+      "--dataset_config",
+      "/workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/val-dataset.toml",
+      "--experiment_mode",
+      "--model_version",
+      "original",
+      "--batch_size",
+      "1",
+      "--num_workers",
+      "1",
+      "--device",
+      "cuda",
+      "--vae",
+      "/workspace/models/qwen_image_vae.safetensors",
+      "--validation"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 72.44551491737366,
+    "log": "/workspace/codex-val-loss-20261005-6da0266c/evidence/cache-latents-val.log"
+  },
+  {
+    "name": "cache-text_encoder_outputs-train",
+    "command": [
+      "/workspace/codex-val-loss-20261005-6da0266c/.venv/bin/python",
+      "/workspace/codex-val-loss-20261005-6da0266c/qwen_image_cache_text_encoder_outputs.py",
+      "--dataset_config",
+      "/workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/train-dataset.toml",
+      "--experiment_mode",
+      "--model_version",
+      "original",
+      "--batch_size",
+      "1",
+      "--num_workers",
+      "1",
+      "--device",
+      "cuda",
+      "--text_encoder",
+      "/workspace/models/qwen_2.5_vl_7b.safetensors"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 133.48784852027893,
+    "log": "/workspace/codex-val-loss-20261005-6da0266c/evidence/cache-text_encoder_outputs-train.log"
+  },
+  {
+    "name": "cache-text_encoder_outputs-val",
+    "command": [
+      "/workspace/codex-val-loss-20261005-6da0266c/.venv/bin/python",
+      "/workspace/codex-val-loss-20261005-6da0266c/qwen_image_cache_text_encoder_outputs.py",
+      "--dataset_config",
+      "/workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/val-dataset.toml",
+      "--experiment_mode",
+      "--model_version",
+      "original",
+      "--batch_size",
+      "1",
+      "--num_workers",
+      "1",
+      "--device",
+      "cuda",
+      "--text_encoder",
+      "/workspace/models/qwen_2.5_vl_7b.safetensors",
+      "--validation"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 78.45203852653503,
+    "log": "/workspace/codex-val-loss-20261005-6da0266c/evidence/cache-text_encoder_outputs-val.log"
+  }
+]

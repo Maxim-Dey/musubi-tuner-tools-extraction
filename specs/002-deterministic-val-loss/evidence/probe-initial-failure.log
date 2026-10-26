@@ -1,0 +1,34 @@
+INFO:musubi_tuner.training.trainer_base:Load dataset config from /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/train-dataset.toml
+INFO:musubi_tuner.dataset.datasources:glob images in /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/dataset/train
+INFO:musubi_tuner.dataset.datasources:found 2 images
+INFO:musubi_tuner.dataset.config_utils:[Dataset 0]
+  is_image_dataset: True
+  resolution: (256, 256)
+  batch_size: 1
+  num_repeats: 1
+  caption_extension: ".txt"
+  enable_bucket: True
+  bucket_no_upscale: True
+  cache_directory: "/workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/cache/train"
+  debug_dataset: False
+    image_directory: /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/dataset/train
+    image_jsonl_file: None
+
+INFO:musubi_tuner.dataset.bucket:bucket: (256, 256), count: 2
+INFO:musubi_tuner.dataset.bucket:total batches: 2
+INFO:musubi_tuner.dataset.datasources:glob images in /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/dataset/val
+INFO:musubi_tuner.dataset.datasources:found 1 images
+INFO:musubi_tuner.training.trainer_base:preparing accelerator
+accelerator device: cuda
+Traceback (most recent call last):
+  File "/workspace/codex-val-loss-20261005-6da0266c/specs/002-deterministic-val-loss/gpu_acceptance_probe.py", line 324, in <module>
+    main()
+  File "/workspace/codex-val-loss-20261005-6da0266c/specs/002-deterministic-val-loss/gpu_acceptance_probe.py", line 320, in main
+    AcceptanceTrainer().train(args)
+  File "/workspace/codex-val-loss-20261005-6da0266c/src/musubi_tuner/training/trainer_base.py", line 1414, in train
+    accelerator, weight_dtype, dit_dtype, dit_weight_dtype, vae_dtype = self._prepare_accelerator_and_dtypes(args)
+                                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/codex-val-loss-20261005-6da0266c/src/musubi_tuner/training/trainer_base.py", line 1580, in _prepare_accelerator_and_dtypes
+    dit_dtype = torch.bfloat16 if args.dit_dtype is None else model_utils.str_to_dtype(args.dit_dtype)
+                                  ^^^^^^^^^^^^^^
+AttributeError: 'Namespace' object has no attribute 'dit_dtype'. Did you mean: 'vae_dtype'?

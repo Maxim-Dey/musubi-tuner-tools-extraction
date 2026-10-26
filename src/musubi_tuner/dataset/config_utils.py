@@ -54,6 +54,7 @@ class BaseDatasetParams:
 class ImageDatasetParams(BaseDatasetParams):
     image_directory: Optional[str] = None
     image_jsonl_file: Optional[str] = None
+    resolve_jsonl_paths: bool = False
 
 
 @dataclass
@@ -174,6 +175,10 @@ class BlueprintGenerator:
             sanitized_user_config = self.sanitizer.sanitize_user_config(user_config)
         except (voluptuous.Invalid, TypeError) as error:
             raise ValueError(f"{source}: {error}; use supported original image dataset fields and types") from error
+        if getattr(argparse_namespace, "experiment_mode", False):
+            from musubi_tuner.training.experiment_config import resolve_dataset_paths
+
+            sanitized_user_config = resolve_dataset_paths(sanitized_user_config, source)
         if not sanitized_user_config.get("datasets"):
             raise ValueError(f"{source}: datasets is empty; provide at least one image dataset")
         sanitized_argparse_namespace = self.sanitizer.sanitize_argparse_namespace(argparse_namespace)
@@ -192,6 +197,7 @@ class BlueprintGenerator:
             params = self.generate_params_by_fallbacks(
                 ImageDatasetParams, [dataset_config, general_config, argparse_config, runtime_params]
             )
+            params.resolve_jsonl_paths = bool(getattr(argparse_namespace, "experiment_mode", False))
             if params.image_jsonl_file and not params.cache_directory:
                 raise ValueError(
                     f"{source}: datasets[{len(dataset_blueprints)}].cache_directory is required for image_jsonl_file; set a cache location"

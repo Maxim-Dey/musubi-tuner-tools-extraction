@@ -1,0 +1,17 @@
+{
+  "status": "passed",
+  "source_images_and_captions_unchanged": 127,
+  "cache_files_unchanged": 6,
+  "execution_files_unchanged": 89,
+  "validation_fingerprints": {
+    "output-resume": "8e77dd036ee857a60a3c533952576fa4b10ccb1ffc3b1175d6437a5b6366c552",
+    "output-periodic": "5d50eee43d193852b0ef7e77581496fc9e187a6f66e33e4c485d3278ec57e100",
+    "output-uninterrupted": "5d50eee43d193852b0ef7e77581496fc9e187a6f66e33e4c485d3278ec57e100"
+  },
+  "protected_sha256": {
+    ".specify/memory/constitution.md": "142c40f1d23875e13a91c26271abd5e4035c9b04366548e9ccd0a48512fec626",
+    "config_for_qwen_image_lora/sample_prompts.txt": "ebc005d4eeb644d57bd716cd9459feeefcc253975ca30730114f4a7b5dc13711"
+  },
+  "periodic_final_step4_adapter_writes": 1,
+  "gpu_compute_processes": ""
+}

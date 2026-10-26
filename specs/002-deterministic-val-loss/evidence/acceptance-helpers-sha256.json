@@ -1,0 +1,4 @@
+{
+  "specs/002-deterministic-val-loss/gpu_acceptance_audit.py": "57ac2dbfdbb5d4244d802f2f5b64e139ba87d6ac4cc479e566f2079a44ee85ad",
+  "specs/002-deterministic-val-loss/gpu_train_acceptance.py": "b908067bfe5f3d3096ddaee397e0d5e2b8f66d5084af96378d5a4d50801649f7"
+}

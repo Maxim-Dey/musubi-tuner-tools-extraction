@@ -1,0 +1,24 @@
+INFO:musubi_tuner.qwen_image_cache_text_encoder_outputs:Load dataset config from /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/train-dataset.toml
+INFO:musubi_tuner.dataset.datasources:glob images in /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/dataset/train
+INFO:musubi_tuner.dataset.datasources:found 2 images
+INFO:musubi_tuner.dataset.config_utils:[Dataset 0]
+  is_image_dataset: True
+  resolution: (256, 256)
+  batch_size: 1
+  num_repeats: 1
+  caption_extension: ".txt"
+  enable_bucket: True
+  bucket_no_upscale: True
+  cache_directory: "/workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/cache/train"
+  debug_dataset: False
+    image_directory: /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/dataset/train
+    image_jsonl_file: None
+
+INFO:musubi_tuner.qwen_image_cache_text_encoder_outputs:Loading Qwen2.5-VL: /workspace/models/qwen_2.5_vl_7b.safetensors
+INFO:musubi_tuner.qwen_image.qwen_image_utils:Loading state dict from /workspace/models/qwen_2.5_vl_7b.safetensors
+INFO:musubi_tuner.qwen_image.qwen_image_utils:Loaded Qwen2.5-VL: <All keys matched successfully>
+INFO:musubi_tuner.qwen_image.qwen_image_utils:Setting Qwen2.5-VL to dtype: torch.bfloat16
+INFO:musubi_tuner.qwen_image.qwen_image_utils:Loading tokenizer from Qwen/Qwen-Image
+INFO:musubi_tuner.qwen_image_cache_text_encoder_outputs:Encoding with Qwen2.5-VL
+INFO:musubi_tuner.cache_text_encoder_outputs:Encoding dataset [0]
+0it [00:00, ?it/s]1it [00:01,  1.29s/it]2it [00:01,  1.49it/s]2it [00:01,  1.31it/s]

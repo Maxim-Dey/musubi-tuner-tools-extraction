@@ -1,0 +1,9 @@
+{
+  "status": "passed",
+  "original_sources_and_captions": 127,
+  "fixed_caches": 6,
+  "checkpoint3_adapter_sha256": "47326f162000823741ca12ebe54d43eb81f82a9a945f5ce6c77b205a2a1469c3",
+  "validation_fingerprint": "8e77dd036ee857a60a3c533952576fa4b10ccb1ffc3b1175d6437a5b6366c552",
+  "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition, 97887 MiB, 0 MiB",
+  "compute_processes": ""
+}

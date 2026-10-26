@@ -1,0 +1,23 @@
+INFO:musubi_tuner.qwen_image_cache_latents:Load dataset config from /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/val-dataset.toml
+INFO:musubi_tuner.dataset.datasources:glob images in /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/dataset/val
+INFO:musubi_tuner.dataset.datasources:found 1 images
+INFO:musubi_tuner.dataset.config_utils:[Dataset 0]
+  is_image_dataset: True
+  resolution: (256, 256)
+  batch_size: 1
+  num_repeats: 1
+  caption_extension: ".txt"
+  enable_bucket: True
+  bucket_no_upscale: True
+  cache_directory: "/workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/cache/val"
+  debug_dataset: False
+    image_directory: /workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/dataset/val
+    image_jsonl_file: None
+
+INFO:musubi_tuner.qwen_image_cache_latents:Loading VAE model from /workspace/models/qwen_image_vae.safetensors
+INFO:musubi_tuner.qwen_image.qwen_image_utils:Initializing VAE
+INFO:musubi_tuner.qwen_image.qwen_image_utils:Loading VAE from /workspace/models/qwen_image_vae.safetensors
+INFO:musubi_tuner.qwen_image.qwen_image_utils:Converted ComfyUI AutoencoderKL state dict keys to official format
+INFO:musubi_tuner.qwen_image.qwen_image_utils:Loaded VAE: <All keys matched successfully>
+INFO:musubi_tuner.cache_latents:Encoding dataset [0]
+0it [00:00, ?it/s]1it [00:00,  1.53it/s]1it [00:00,  1.53it/s]

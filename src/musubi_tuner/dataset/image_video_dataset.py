@@ -256,6 +256,7 @@ class ImageDataset(BaseDataset):
         cache_directory: Optional[str] = None,
         debug_dataset: bool = False,
         architecture: str = "no_default",
+        resolve_jsonl_paths: bool = False,
     ):
         super().__init__(
             resolution,
@@ -273,7 +274,7 @@ class ImageDataset(BaseDataset):
         if image_directory is not None:
             self.datasource = ImageDirectoryDatasource(image_directory, caption_extension)
         elif image_jsonl_file is not None:
-            self.datasource = ImageJsonlDatasource(image_jsonl_file)
+            self.datasource = ImageJsonlDatasource(image_jsonl_file, resolve_relative_paths=resolve_jsonl_paths)
         else:
             raise ValueError("image_directory or image_jsonl_file must be specified")
         if self.cache_directory is None:

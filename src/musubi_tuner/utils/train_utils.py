@@ -125,6 +125,8 @@ def save_and_remove_state_on_epoch_end(args: argparse.Namespace, accelerator: ac
 
     state_dir = os.path.join(args.output_dir, EPOCH_STATE_NAME.format(model_name, epoch_no))
     accelerator.save_state(state_dir)
+    if not getattr(accelerator, "is_main_process", True):
+        return
     if args.save_state_to_huggingface:
         logger.info("uploading state to huggingface.")
         huggingface_utils.upload(args, state_dir, "/" + EPOCH_STATE_NAME.format(model_name, epoch_no))
@@ -147,6 +149,8 @@ def save_and_remove_state_stepwise(args: argparse.Namespace, accelerator: accele
 
     state_dir = os.path.join(args.output_dir, STEP_STATE_NAME.format(model_name, step_no))
     accelerator.save_state(state_dir)
+    if not getattr(accelerator, "is_main_process", True):
+        return
     if args.save_state_to_huggingface:
         logger.info("uploading state to huggingface.")
         huggingface_utils.upload(args, state_dir, "/" + STEP_STATE_NAME.format(model_name, step_no))
@@ -173,6 +177,8 @@ def save_state_on_train_end(args: argparse.Namespace, accelerator: accelerate.Ac
 
     state_dir = os.path.join(args.output_dir, LAST_STATE_NAME.format(model_name))
     accelerator.save_state(state_dir)
+    if not getattr(accelerator, "is_main_process", True):
+        return
 
     if args.save_state_to_huggingface:
         logger.info("uploading last state to huggingface.")

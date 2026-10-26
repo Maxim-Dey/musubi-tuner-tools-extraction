@@ -14,6 +14,8 @@ from musubi_tuner.dataset.image_video_dataset import (
 from musubi_tuner.qwen_image import qwen_image_utils
 from musubi_tuner.qwen_image import qwen_image_autoencoder_kl
 import musubi_tuner.cache_latents as cache_latents
+from musubi_tuner.training.experiment_config import add_cache_arguments, configure_cache_args
+from musubi_tuner.training.validation_inputs import prepare_cache_batch, validate_cache_dataset
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +36,7 @@ def encode_and_save_batch(vae: qwen_image_autoencoder_kl.AutoencoderKLQwenImage,
 
 
 def qwen_image_setup_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    add_cache_arguments(parser)
     qwen_image_utils.add_model_version_args(parser)
     return parser
 
@@ -42,7 +45,7 @@ def main():
     parser = cache_latents.setup_parser_common()
     parser = qwen_image_setup_parser(parser)
 
-    args = parser.parse_args()
+    args = configure_cache_args(parser.parse_args())
     config_utils.validate_cache_args(args)
     qwen_image_utils.resolve_model_version_args(args)
     if args.model_version != "original":
@@ -63,6 +66,7 @@ def main():
     train_dataset_group = config_utils.generate_dataset_group_by_blueprint(blueprint.dataset_group)
 
     config_utils.validate_dataset_sources(train_dataset_group, args.dataset_config)
+    validate_cache_dataset(train_dataset_group, args)
     datasets = train_dataset_group.datasets
 
     if args.debug_mode is not None:
@@ -74,9 +78,12 @@ def main():
     logger.info(f"Loading VAE model from {args.vae}")
     vae = qwen_image_utils.load_vae(args.vae, device=device, disable_mmap=True)
     vae.to(device)
+    if args.validation:
+        vae.eval()
 
     # encoding closure
     def encode(batch: List[ItemInfo]):
+        prepare_cache_batch(batch, datasets, args)
         encode_and_save_batch(vae, batch)
 
     # reuse core loop from cache_latents with no change

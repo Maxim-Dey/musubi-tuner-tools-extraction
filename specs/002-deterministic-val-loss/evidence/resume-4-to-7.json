@@ -1,0 +1,39 @@
+{
+  "status": "passed",
+  "verified_before_next_update": true,
+  "comparison": "exact, with optimizer tensors compared on CPU",
+  "torch": "2.8.0+cu128",
+  "accelerate": "1.6.0",
+  "checkpoint": "/workspace/codex-val-loss-20261005-6da0266c/config_for_qwen_image_lora/acceptance/output-periodic/qwen_image_val_acceptance-step4",
+  "optimizer_global_step": 4,
+  "accelerator_step": 0,
+  "adapter_identity": "717247fa40fda0397816310918b0c7f6cae9be8d71bd468d254a7546afc455ba",
+  "adapter_tensor_count": 2520,
+  "optimizer_count": 1,
+  "scheduler_count": 1,
+  "rng": {
+    "python": true,
+    "numpy": true,
+    "torch_cpu": true,
+    "cuda_devices_checked": 1
+  },
+  "validation_fingerprint": "5d50eee43d193852b0ef7e77581496fc9e187a6f66e33e4c485d3278ec57e100",
+  "last_validation": {
+    "adapter_identity": "717247fa40fda0397816310918b0c7f6cae9be8d71bd468d254a7546afc455ba",
+    "computation_identity": "7867df452f458cdc622ad8e907920abecae305d9f0193673d67b73250d3efe51",
+    "metrics": {
+      "val_loss_high_noise": 0.14960935711860657,
+      "val_loss_low_noise": 0.10210729390382767,
+      "val_loss_mean": 0.12585832551121712
+    },
+    "step": 4,
+    "validation_fingerprint": "5d50eee43d193852b0ef7e77581496fc9e187a6f66e33e4c485d3278ec57e100"
+  },
+  "checked_files": {
+    "model.safetensors": "62b4d63b208ddc89b870ad42cc3f5250bb0bb15b72ff45fc69c24da93ebd6d3a",
+    "trainer_state.json": "0162f011f859b12c52c52d90aa6bf557f0aa358256c1d37e81e987ebec5847bb",
+    "optimizer.bin": "f4b21b3238322e517b82bd9ee905dc83369dcde74c50622bbcb11c4bbabe3d03",
+    "scheduler.bin": "288b4d1a0050ada6dc8098c0f3534195ba0afbb63e34a43c89974dbf9d988907",
+    "random_states_0.pkl": "bc09dd1f8c5675e6dc7c29bfba43a427562f42f934d74beba528e2ecb795ea6b"
+  }
+}

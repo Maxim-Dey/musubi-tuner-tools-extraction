@@ -1,0 +1,8 @@
+{
+  "train/a1fa_k1b_med1um_0001_1024x1024_qi.safetensors": "30118bf622dcf3b49207c3cf1333f2bfd7a25fab25ef2f0d1d9b7b269d0741a1",
+  "train/a1fa_k1b_med1um_0001_qi_te.safetensors": "cc3e0562934c94f916d6d5cfac75f7550755459bd621c9db89ec9a588c5f3dc4",
+  "train/a1fa_k1b_med1um_0002_1024x1024_qi.safetensors": "3e92c40603c2c3f225930d1d56a37d3b4a70097d03510915e65f8430ae017f4c",
+  "train/a1fa_k1b_med1um_0002_qi_te.safetensors": "72afbdb4acb16dde28a01307c8f92bc1b4d05132d5606a003b6ab09c8e55002a",
+  "val/a1fa_k1b_med1um_0003_1024x1024_qi.safetensors": "1c3ac7b4976c674dcf06bbe8a18d917d192ba61952e253dab65344426814950f",
+  "val/a1fa_k1b_med1um_0003_qi_te.safetensors": "ee3e7020651d1f1ff70266ac1d5fe87e1f31838a183097c78c16daaadec42def"
+}
