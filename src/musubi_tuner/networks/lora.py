@@ -8,7 +8,6 @@ import math
 import os
 import re
 from typing import Any, Dict, List, Optional, Type, Union
-from transformers import CLIPTextModel
 import torch
 import torch.nn as nn
 
@@ -16,8 +15,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
-
-HUNYUAN_TARGET_REPLACE_MODULES = ["MMDoubleStreamBlock", "MMSingleStreamBlock"]
 
 
 class LoRAModule(torch.nn.Module):
@@ -366,42 +363,6 @@ class LoRAInfModule(LoRAModule):
         return self.default_forward(x)
 
 
-def create_arch_network(
-    multiplier: float,
-    network_dim: Optional[int],
-    network_alpha: Optional[float],
-    vae: nn.Module,
-    text_encoders: List[nn.Module],
-    unet: nn.Module,
-    neuron_dropout: Optional[float] = None,
-    **kwargs,
-):
-    # add default exclude patterns
-    exclude_patterns = kwargs.get("exclude_patterns", None)
-    if exclude_patterns is None:
-        exclude_patterns = []
-    else:
-        exclude_patterns = ast.literal_eval(exclude_patterns)
-
-    # exclude if 'img_mod', 'txt_mod' or 'modulation' in the name
-    exclude_patterns.append(r".*(img_mod|txt_mod|modulation).*")
-
-    kwargs["exclude_patterns"] = exclude_patterns
-
-    return create_network(
-        HUNYUAN_TARGET_REPLACE_MODULES,
-        "lora_unet",
-        multiplier,
-        network_dim,
-        network_alpha,
-        vae,
-        text_encoders,
-        unet,
-        neuron_dropout=neuron_dropout,
-        **kwargs,
-    )
-
-
 def create_network(
     target_replace_modules: List[str],
     prefix: str,
@@ -498,7 +459,7 @@ class LoRANetwork(torch.nn.Module):
         self,
         target_replace_modules: List[str],
         prefix: str,
-        text_encoders: Union[List[CLIPTextModel], CLIPTextModel],
+        text_encoders: Union[List[nn.Module], nn.Module],
         unet: nn.Module,
         multiplier: float = 1.0,
         lora_dim: int = 4,
@@ -957,19 +918,6 @@ class LoRANetwork(torch.nn.Module):
             norms.append(scalednorm.item())
 
         return keys_scaled, sum(norms) / len(norms), max(norms)
-
-
-def create_arch_network_from_weights(
-    multiplier: float,
-    weights_sd: Dict[str, torch.Tensor],
-    text_encoders: Optional[List[nn.Module]] = None,
-    unet: Optional[nn.Module] = None,
-    for_inference: bool = False,
-    **kwargs,
-) -> LoRANetwork:
-    return create_network_from_weights(
-        HUNYUAN_TARGET_REPLACE_MODULES, multiplier, weights_sd, text_encoders, unet, for_inference, **kwargs
-    )
 
 
 # Create network from weights for inference, weights are not loaded here (because can be merged)

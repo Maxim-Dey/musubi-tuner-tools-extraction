@@ -1,169 +1,96 @@
-"""Prompt loading and sampling trigger helpers used during training."""
+"""Image prompt loading, sampling triggers and PNG saving used during training."""
 
 import json
-import logging
+import math
+import os
 import re
-from typing import Dict
 
+import numpy as np
+from PIL import Image
+import torch
+import torchvision
+from einops import rearrange
 import toml
 
 
-logger = logging.getLogger(__name__)
+PROMPT_FIELDS = {"prompt", "negative_prompt", "width", "height", "sample_steps", "cfg_scale", "seed", "enum"}
 
 
-def line_to_prompt_dict(line: str) -> dict:
-    # subset of gen_img_diffusers
+def _validate_prompt(prompt: dict, source: str) -> dict:
+    if not isinstance(prompt, dict):
+        raise ValueError(f"{source}: expected an image prompt object.")
+    unknown = set(prompt) - PROMPT_FIELDS
+    if unknown:
+        raise ValueError(f"{source}: unsupported image prompt fields {sorted(unknown)}; remove them.")
+    for key in ("prompt", "negative_prompt"):
+        if key in prompt and not isinstance(prompt[key], str):
+            raise ValueError(f"{source}: {key} must be a string.")
+    for key in ("width", "height", "sample_steps", "seed", "enum"):
+        if key in prompt and type(prompt[key]) is not int:
+            raise ValueError(f"{source}: {key} must be an integer.")
+    for key in ("width", "height"):
+        if key in prompt and prompt[key] < 8:
+            raise ValueError(f"{source}: {key} must be at least 8 before image-grid alignment.")
+    if "sample_steps" in prompt and prompt["sample_steps"] < 1:
+        raise ValueError(f"{source}: sample_steps must be positive.")
+    if "seed" in prompt and not -(2**63) <= prompt["seed"] < 2**64:
+        raise ValueError(f"{source}: seed must be in the PyTorch seed range [-2**63, 2**64-1].")
+    if "cfg_scale" in prompt:
+        value = prompt["cfg_scale"]
+        if type(value) not in (int, float) or not math.isfinite(value):
+            raise ValueError(f"{source}: cfg_scale must be a finite number.")
+    return prompt
+
+
+def line_to_prompt_dict(line: str, source: str = "sample prompt") -> dict:
     prompt_args = line.split(" --")
-    prompt_dict = {}
-    prompt_dict["prompt"] = prompt_args[0]
-
-    for parg in prompt_args[1:]:
-        if not parg.strip():
-            continue
+    prompt = {"prompt": prompt_args[0]}
+    names = {"w": "width", "h": "height", "d": "seed", "s": "sample_steps", "l": "cfg_scale", "n": "negative_prompt"}
+    for option in prompt_args[1:]:
+        match = re.fullmatch(r"([a-z]+)\s+(.+)", option, re.IGNORECASE)
+        if match is None or match[1].lower() not in names:
+            raise ValueError(f"{source}: unsupported or malformed option --{option}; use --w/--h/--d/--s/--l/--n.")
+        name = names[match[1].lower()]
+        raw = match[2]
         try:
-            m = re.match(r"w (\d+)", parg, re.IGNORECASE)
-            if m:
-                prompt_dict["width"] = int(m.group(1))
-                continue
-
-            m = re.match(r"h (\d+)", parg, re.IGNORECASE)
-            if m:
-                prompt_dict["height"] = int(m.group(1))
-                continue
-
-            m = re.match(r"f (\d+)", parg, re.IGNORECASE)
-            if m:
-                prompt_dict["frame_count"] = int(m.group(1))
-                continue
-
-            m = re.match(r"d (\d+)", parg, re.IGNORECASE)
-            if m:
-                prompt_dict["seed"] = int(m.group(1))
-                continue
-
-            m = re.match(r"s (\d+)", parg, re.IGNORECASE)
-            if m:  # steps
-                prompt_dict["sample_steps"] = max(1, min(1000, int(m.group(1))))
-                continue
-
-            m = re.match(r"g ([\d\.]+)", parg, re.IGNORECASE)
-            if m:  # scale
-                prompt_dict["guidance_scale"] = float(m.group(1))
-                continue
-
-            m = re.match(r"fs ([\d\.]+)", parg, re.IGNORECASE)
-            if m:  # scale
-                prompt_dict["discrete_flow_shift"] = float(m.group(1))
-                continue
-
-            m = re.match(r"fsa ([\d\.]+)", parg, re.IGNORECASE)
-            if m:  # audio target flow shift (MiniMax-H3 joint AV)
-                prompt_dict["discrete_flow_shift_audio"] = float(m.group(1))
-                continue
-
-            m = re.match(r"ofps (\d+)", parg, re.IGNORECASE)
-            if m:  # output fps (MiniMax-H3 temporal stretch)
-                prompt_dict["output_fps"] = int(m.group(1))
-                continue
-
-            m = re.match(r"skb (\d+)", parg, re.IGNORECASE)
-            if m:  # stretch keep bands (MiniMax-H3 temporal stretch)
-                prompt_dict["stretch_keep_bands"] = int(m.group(1))
-                continue
-
-            m = re.match(r"l ([\d\.]+)", parg, re.IGNORECASE)
-            if m:  # scale
-                prompt_dict["cfg_scale"] = float(m.group(1))
-                continue
-
-            m = re.match(r"n (.+)", parg, re.IGNORECASE)
-            if m:  # negative prompt
-                prompt_dict["negative_prompt"] = m.group(1)
-                continue
-
-            m = re.match(r"i (.+)", parg, re.IGNORECASE)
-            if m:  # image path
-                prompt_dict["image_path"] = m.group(1).strip()
-                continue
-
-            m = re.match(r"ei (.+)", parg, re.IGNORECASE)
-            if m:  # end image path
-                prompt_dict["end_image_path"] = m.group(1).strip()
-                continue
-
-            m = re.match(r"cn (.+)", parg, re.IGNORECASE)
-            if m:
-                prompt_dict["control_video_path"] = m.group(1).strip()
-                continue
-
-            m = re.match(r"ci (.+)", parg, re.IGNORECASE)
-            if m:
-                # can be multiple control images
-                control_image_path = m.group(1).strip()
-                if "control_image_path" not in prompt_dict:
-                    prompt_dict["control_image_path"] = []
-                prompt_dict["control_image_path"].append(control_image_path)
-                continue
-
-            m = re.match(r"of (.+)", parg, re.IGNORECASE)
-            if m:  # one frame inference options
-                prompt_dict["one_frame"] = m.group(1).strip()
-                continue
-
-            m = re.match(r"o (.+)", parg, re.IGNORECASE)
-            if m:  # output file name (generation scripts with a prompt file)
-                prompt_dict["output_name"] = m.group(1).strip()
-                continue
-
-            m = re.match(r"rj (.+)", parg, re.IGNORECASE)
-            if m:  # reference JSONL (MiniMax-H3 Ref2VA)
-                prompt_dict["reference_jsonl"] = m.group(1).strip()
-                continue
-
-            m = re.match(r"ref (.+)", parg, re.IGNORECASE)
-            if m:
-                # can be multiple inline references (MiniMax-H3 Ref2VA)
-                if "ref" not in prompt_dict:
-                    prompt_dict["ref"] = []
-                prompt_dict["ref"].append(m.group(1).strip())
-                continue
-
-            logger.warning(f"Unknown prompt option ignored / 不明なオプションを無視します: --{parg}")
-
-        except ValueError as ex:
-            logger.error(f"Exception in parsing / 解析エラー: {parg}")
-            logger.error(ex)
-
-    return prompt_dict
+            value = raw if name == "negative_prompt" else float(raw) if name == "cfg_scale" else int(raw)
+        except ValueError as exc:
+            raise ValueError(f"{source}: invalid value for --{match[1]}: {raw!r}.") from exc
+        if name == "sample_steps":
+            value = max(1, min(1000, value))
+        prompt[name] = value
+    return _validate_prompt(prompt, source)
 
 
-def load_prompts(prompt_file: str) -> list[Dict]:
-    # read prompts
-    if prompt_file.endswith(".txt"):
-        with open(prompt_file, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        prompts = [line.strip() for line in lines if len(line.strip()) > 0 and line[0] != "#"]
-    elif prompt_file.endswith(".toml"):
-        with open(prompt_file, "r", encoding="utf-8") as f:
-            data = toml.load(f)
-        prompts = [dict(**data["prompt"], **subset) for subset in data["prompt"]["subset"]]
-    elif prompt_file.endswith(".json"):
-        with open(prompt_file, "r", encoding="utf-8") as f:
-            prompts = json.load(f)
-
-    # preprocess prompts
-    for i in range(len(prompts)):
-        prompt_dict = prompts[i]
-        if isinstance(prompt_dict, str):
-            prompt_dict = line_to_prompt_dict(prompt_dict)
-            prompts[i] = prompt_dict
-        assert isinstance(prompt_dict, dict)
-
-        # Adds an enumerator to the dict based on prompt position. Used later to name image files. Also cleanup of extra data in original prompt dict.
-        prompt_dict["enum"] = i
-        prompt_dict.pop("subset", None)
-
-    return prompts
+def load_prompts(prompt_file: str) -> list[dict]:
+    prompt_file = os.fspath(prompt_file)
+    suffix = os.path.splitext(prompt_file)[1].lower()
+    with open(prompt_file, "r", encoding="utf-8") as stream:
+        if suffix == ".txt":
+            prompts = [line.strip() for line in stream if line.strip() and not line.lstrip().startswith("#")]
+        elif suffix == ".toml":
+            data = toml.load(stream)
+            if set(data) != {"prompt"} or not isinstance(data["prompt"], dict):
+                raise ValueError(f"{prompt_file}: expected [prompt] and [[prompt.subset]] image prompts.")
+            defaults = data["prompt"].copy()
+            subsets = defaults.pop("subset", None)
+            if not isinstance(subsets, list) or any(not isinstance(item, dict) for item in subsets):
+                raise ValueError(f"{prompt_file}: prompt.subset must be a list of image prompt objects.")
+            _validate_prompt(defaults, f"{prompt_file} [prompt]")
+            prompts = [{**defaults, **subset} for subset in subsets]
+        elif suffix == ".json":
+            prompts = json.load(stream)
+        else:
+            raise ValueError(f"{prompt_file}: unsupported sample prompt format; use .txt, .toml or .json.")
+    if not isinstance(prompts, list) or not prompts:
+        raise ValueError(f"{prompt_file}: provide at least one image prompt.")
+    result = []
+    for index, prompt in enumerate(prompts):
+        source = f"{prompt_file}: prompt {index + 1}"
+        prompt = line_to_prompt_dict(prompt, source) if isinstance(prompt, str) else _validate_prompt(prompt, source).copy()
+        prompt["enum"] = index
+        result.append(prompt)
+    return result
 
 
 def should_sample_images(args, steps, epoch=None):
@@ -178,3 +105,28 @@ def should_sample_images(args, steps, epoch=None):
         if not should_sample_by_steps and not should_sample_by_epochs:
             return False
     return True
+
+
+def save_images_grid(
+    videos: torch.Tensor, parent_dir: str, image_name: str, rescale: bool = False, n_rows: int = 1, create_subdir=True
+) -> list[str]:
+    """Preserve the training PNG grid format for (B,C,1,H,W) image tensors."""
+    if videos.ndim != 5 or videos.shape[2] != 1:
+        raise ValueError("image samples must have shape (B,C,1,H,W).")
+    videos = rearrange(videos, "b c t h w -> t b c h w")
+    outputs = []
+    for x in videos:
+        x = torchvision.utils.make_grid(x, nrow=n_rows)
+        x = x.transpose(0, 1).transpose(1, 2).squeeze(-1)
+        if rescale:
+            x = (x + 1.0) / 2.0
+        x = torch.clamp(x, 0, 1)
+        outputs.append((x * 255).numpy().astype(np.uint8))
+    output_dir = os.path.join(parent_dir, image_name) if create_subdir else parent_dir
+    os.makedirs(output_dir, exist_ok=True)
+    image_paths = []
+    for index, pixels in enumerate(outputs):
+        image_path = os.path.join(output_dir, f"{image_name}_{index:03d}.png")
+        image_paths.append(image_path)
+        Image.fromarray(pixels).save(image_path)
+    return image_paths

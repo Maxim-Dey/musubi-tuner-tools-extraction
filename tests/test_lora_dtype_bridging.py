@@ -1,32 +1,8 @@
-"""Synthetic probe for the LoRA dtype-bridging helpers added in PR #966.
+"""CPU regressions for LoRA dtype bridging.
 
-`LoRAModule._lora_input` and `LoRAModule._match_org_dtype` were added to make LoRA
-training work in an autocast-free regime where the frozen base weights and the LoRA
-weights have different dtypes (the Ideogram 4 case: bf16 base from a dequantized FP8
-checkpoint + fp32 LoRA, run with `--mixed_precision no`).
-
-This test characterizes *exactly when each helper casts* and *what breaks if it is
-removed*, deterministically and on CPU only (no real model / no CUDA needed). It exists
-to decide whether the helpers can be removed from the shared `networks/lora.py` without
-regressing other architectures.
-
-Summary of the findings this test locks in:
-
-  _lora_input(x):  casts x -> lora_down.weight.dtype  iff
-                   (x is float) and (x.dtype != lora dtype) and (autocast disabled).
-                   => no-op whenever autocast is enabled.
-
-  _match_org_dtype(delta, org):  casts delta -> org.dtype  iff dtypes differ.
-                   => no fire guard; always active.
-
-  Regime matrix (base / LoRA / autocast):
-    bf16 base, fp32 LoRA, autocast OFF  (Ideogram 4, mixed_precision=no, DEFAULT)
-        -> BOTH helpers fire and are load-bearing.
-    *,    *,         autocast ON         (Ideogram 4 bf16; other archs bf16/fp16)
-        -> both no-op (autocast bridges the matmul dtype).
-    fp32 base, fp32 LoRA, autocast OFF  (other archs, mixed_precision=no: --full_bf16
-                                          disabled => weights are fp32)
-        -> both no-op (everything is already fp32).
+Exercise mixed and matching base/adapter dtypes with autocast enabled and disabled.
+The block-level checks preserve gradient-compatible Linear execution and expose
+what breaks when either dtype helper is removed.
 """
 
 import contextlib
@@ -126,8 +102,8 @@ def test_add_then_cast_is_at_least_as_precise_as_cast_then_add():
 # --------------------------------------------------------------------------------------
 
 
-def test_ideogram4_no_regime_helpers_are_load_bearing():
-    """bf16 base + fp32 LoRA + autocast OFF (Ideogram 4 default). Both helpers fire."""
+def test_mixed_dtype_no_regime_helpers_are_load_bearing():
+    """bf16 base + fp32 LoRA + autocast OFF. Both helpers fire."""
     in_dim = out_dim = 8
     base, _ = _make_wrapped_lora(in_dim, out_dim, base_dtype=torch.bfloat16, lora_dtype=torch.float32)
     downstream = nn.Linear(out_dim, out_dim, bias=True).to(torch.bfloat16)
@@ -140,7 +116,7 @@ def test_ideogram4_no_regime_helpers_are_load_bearing():
     assert y.dtype == torch.bfloat16  # downstream bf16 Linear is happy
 
 
-def test_ideogram4_no_regime_breaks_without_match_org_dtype():
+def test_mixed_dtype_no_regime_breaks_without_match_org_dtype():
     """Removing _match_org_dtype leaks fp32 into the downstream bf16 Linear -> RuntimeError."""
     in_dim = out_dim = 8
     base, _ = _make_wrapped_lora(in_dim, out_dim, base_dtype=torch.bfloat16, lora_dtype=torch.float32, strip_match=True)
@@ -154,7 +130,7 @@ def test_ideogram4_no_regime_breaks_without_match_org_dtype():
             downstream(h)  # F.linear(fp32 input, bf16 weight) with autocast off
 
 
-def test_ideogram4_no_regime_breaks_without_lora_input():
+def test_mixed_dtype_no_regime_breaks_without_lora_input():
     """Removing _lora_input feeds bf16 x into the fp32 lora_down matmul -> RuntimeError."""
     in_dim = out_dim = 8
     base, _ = _make_wrapped_lora(in_dim, out_dim, base_dtype=torch.bfloat16, lora_dtype=torch.float32, strip_lora_input=True)
@@ -165,7 +141,7 @@ def test_ideogram4_no_regime_breaks_without_lora_input():
 
 
 def test_autocast_on_regime_helpers_are_noop_and_removal_is_safe():
-    """Any base/LoRA dtype + autocast ON (Ideogram 4 bf16; other archs bf16). Helpers no-op."""
+    """Any base/LoRA dtype + autocast ON (mixed-dtype base bf16; matching-dtype setups bf16). Helpers no-op."""
     in_dim = out_dim = 8
     for strip in (False, True):
         base, _ = _make_wrapped_lora(
@@ -186,8 +162,8 @@ def test_autocast_on_regime_helpers_are_noop_and_removal_is_safe():
         assert y.dtype == torch.bfloat16
 
 
-def test_other_arch_no_regime_all_fp32_helpers_are_noop_and_removal_is_safe():
-    """fp32 base + fp32 LoRA + autocast OFF (other archs, mixed_precision=no). Helpers no-op."""
+def test_matching_dtype_no_regime_all_fp32_helpers_are_noop_and_removal_is_safe():
+    """fp32 base + fp32 LoRA + autocast OFF (matching-dtype setups, mixed_precision=no). Helpers no-op."""
     in_dim = out_dim = 8
     for strip in (False, True):
         base, _ = _make_wrapped_lora(

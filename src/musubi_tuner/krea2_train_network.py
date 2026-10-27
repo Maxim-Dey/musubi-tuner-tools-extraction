@@ -11,8 +11,11 @@ blocks (--compile).
 """
 
 import argparse
+import ast
 import gc
-import itertools
+import math
+import os
+import re
 from typing import Optional
 
 import torch
@@ -23,17 +26,12 @@ from tqdm import tqdm
 from einops import rearrange, repeat
 
 from musubi_tuner.dataset.architectures import ARCHITECTURE_KREA2, ARCHITECTURE_KREA2_FULL
-from musubi_tuner.hv_train_network import (
-    DiTOutput,
-    NetworkTrainer,
-    clean_memory_on_device,
-    load_prompts,
-    setup_parser_common,
-    read_config_from_file,
-)
+from musubi_tuner.training.trainer_base import DiTOutput, NetworkTrainer
+from musubi_tuner.training.accelerator_setup import clean_memory_on_device
+from musubi_tuner.training.sampling_prompts import load_prompts
+from musubi_tuner.training.parser_common import setup_parser_common, read_config_from_file, config_error
 from musubi_tuner.krea2 import krea2_utils
 from musubi_tuner.krea2 import krea2_sampling
-from musubi_tuner.networks import lora_krea2
 from musubi_tuner.qwen_image import qwen_image_utils
 from musubi_tuner.utils import model_utils
 
@@ -44,19 +42,6 @@ logging.basicConfig(level=logging.INFO)
 
 
 class Krea2NetworkTrainer(NetworkTrainer):
-    def __init__(self):
-        super().__init__()
-        self.vae_frame_stride = 1  # single image
-        # M1 (resident) weight stashes for RAW-train / Turbo-sample. Both None when unused or
-        # in M2 (per-validation streaming) mode; built lazily on the first sample step.
-        # _turbo_stash holds the (fp8-quantized) Turbo weights; _raw_stash a one-time snapshot
-        # of the RAW base weights to restore after sampling (the fp8 base is frozen for LoRA,
-        # so a single snapshot stays valid for the whole run).
-        self._turbo_stash = None
-        self._raw_stash = None
-        # --turbo_lora: second, frozen LoRANetwork composed on RAW (see _build_turbo_lora_network).
-        self._turbo_lora_network = None
-
     # region model specific
 
     @property
@@ -69,47 +54,99 @@ class Krea2NetworkTrainer(NetworkTrainer):
 
     def handle_model_specific_args(self, args):
         self.dit_dtype = torch.bfloat16
-        self._i2v_training = False
-        self._control_training = False
-        self.default_guidance_scale = 1.0  # K2 t2i, not used at train time
         # self.blocks_to_swap is set by the base trainer (handle_model_specific_args runs first).
         # K2 fp8 supports only the scaled (dynamic) path; plain --fp8_base alone would cast the
         # whole DiT (incl. norms) to fp8, which breaks. Require --fp8_scaled with --fp8_base.
         if args.fp8_base and not args.fp8_scaled:
-            raise ValueError("Krea 2 fp8 supports only scaled fp8: pass --fp8_scaled together with --fp8_base.")
+            config_error(args, "fp8_base", "Krea2 requires scaled fp8; also set fp8_scaled=true.")
         # ConvRot int8 is an alternative base-weight quantization; one quantization at a time.
         if args.convrot_int8 and (args.fp8_base or args.fp8_scaled):
-            raise ValueError("--convrot_int8 cannot be combined with --fp8_base/--fp8_scaled: choose one quantization.")
-        # Turbo sampling would need the ConvRot quantizer threaded through the Turbo/RAW weight
-        # stashes (load_krea2_dit_state_dict); not wired up yet.
-        if args.convrot_int8 and args.turbo_dit:
-            raise ValueError("--convrot_int8 is not supported together with --turbo_dit yet; omit one of them.")
+            config_error(args, "convrot_int8", "cannot be combined with fp8_base/fp8_scaled; choose one quantization.")
         if args.convrot_int8_bwd == "int8" and not args.convrot_int8:
-            raise ValueError("--convrot_int8_bwd int8 requires --convrot_int8.")
-        # RAW-train / Turbo-sample: the recommended K2 LoRA workflow is to train on the RAW
-        # checkpoint and run inference on the distilled Turbo. --turbo_dit (a full separate
-        # Turbo checkpoint) swaps the base weights to Turbo for sample generation (the trainee
-        # LoRA stays hooked and applies on top automatically). --turbo_lora instead composes a
-        # second, frozen LoRA network live on top of RAW, alongside the trainee LoRA -- built
-        # eagerly in _build_network -- and never touches the base weights at all, so it is not
-        # bound by --turbo_dit's block-swap restriction below (only mutual exclusion with
-        # --turbo_dit itself, checked next).
-        turbo_lora = getattr(args, "turbo_lora", None)
-        if args.turbo_dit and turbo_lora:
-            raise ValueError("--turbo_dit and --turbo_lora are mutually exclusive: choose one turbo source for sample generation.")
-        if args.turbo_dit_cache and not args.turbo_dit:
-            raise ValueError("--turbo_dit_cache (M1, resident Turbo weights) requires --turbo_dit.")
-        # --turbo_dit swaps base weights from outside the model; the block-swap offloader's own
-        # CPU master never sees that swap, producing a RAW/Turbo weight mix. --turbo_lora never
-        # swaps weights (only composes a LoRA hook), so it is not restricted here.
-        if args.turbo_dit and args.blocks_to_swap:
-            raise ValueError(
-                "--turbo_dit (Turbo sample generation) is not supported together with --blocks_to_swap: "
-                "the block-swap offloader manages the base weights and an external swap would mix RAW/Turbo. "
-                "Use Turbo sampling without block swap (VRAM permitting), or omit --turbo_dit to sample on RAW."
-            )
-        if (args.turbo_dit or turbo_lora) and not args.sample_prompts:
-            logger.warning("--turbo_dit/--turbo_lora is set but --sample_prompts is not; Turbo is only used for sample generation.")
+            config_error(args, "convrot_int8_bwd", "int8 backward requires convrot_int8=true; enable it or use bf16.")
+
+    def validate_training_args(self, args):
+        super().validate_training_args(args)
+        from musubi_tuner.modules import attention
+        from musubi_tuner.modules.convrot_int8_utils import HAS_TRITON
+
+        for key, backend in (
+            ("flash_attn", attention.flash_attn),
+            ("flash3", attention.flash_attn_interface),
+            ("xformers", attention.xops),
+        ):
+            if getattr(args, key) and backend is None:
+                config_error(args, key, "the requested attention dependency is unavailable; install it or choose sdpa.")
+        if args.convrot_int8_bwd == "int8" and not HAS_TRITON:
+            config_error(args, "convrot_int8_bwd", "int8 backward requires Triton; install it or select bf16 backward.")
+        if args.network_module not in ("networks.lora_krea2", "musubi_tuner.networks.lora_krea2"):
+            config_error(args, "network_module", "only Krea2 LoRA is supported; use networks.lora_krea2.")
+        max_swap = krea2_utils.single_mmdit_large_wide.layers - 2
+        if (args.blocks_to_swap or 0) > max_swap:
+            config_error(args, "blocks_to_swap", f"the loaded architecture supports at most {max_swap} swapped blocks.")
+        options = self._parse_option_pairs(args, "network_args", literal=False)
+        known = {
+            "conv_dim",
+            "conv_alpha",
+            "rank_dropout",
+            "module_dropout",
+            "verbose",
+            "exclude_patterns",
+            "include_patterns",
+            "loraplus_lr_ratio",
+        }
+        for key, raw in options.items():
+            if key not in known:
+                config_error(args, "network_args", f"unknown LoRA option {key!r}; remove it or use a supported LoRA option.")
+            try:
+                if key in ("exclude_patterns", "include_patterns"):
+                    patterns = ast.literal_eval(raw)
+                    if patterns is not None:
+                        if not isinstance(patterns, list) or any(not isinstance(pattern, str) for pattern in patterns):
+                            raise ValueError("expected a list of regular-expression strings")
+                        for pattern in patterns:
+                            re.compile(pattern)
+                elif key == "verbose":
+                    if raw not in ("True", "False", "None"):
+                        raise ValueError("expected True or False")
+                else:
+                    value = int(raw) if key == "conv_dim" else float(raw)
+                    if not math.isfinite(value):
+                        raise ValueError("expected a finite number")
+                    if key.endswith("dropout") and not 0 <= value <= 1:
+                        raise ValueError("expected a value between 0 and 1")
+                    if key == "rank_dropout" and value == 1:
+                        raise ValueError("rank_dropout must be below 1 to avoid division by zero")
+                    if key == "conv_dim" and value <= 0:
+                        raise ValueError("expected a positive value")
+                    if key in ("conv_alpha", "loraplus_lr_ratio") and value < 0:
+                        raise ValueError("expected a nonnegative value")
+            except (ValueError, SyntaxError, re.error) as exc:
+                config_error(args, "network_args", f"invalid {key}={raw!r}: {exc}; correct this LoRA option.")
+        sampling_requested = args.sample_at_first or args.sample_every_n_steps or args.sample_every_n_epochs
+        if sampling_requested and not args.sample_prompts:
+            config_error(args, "sample_prompts", "required for sample_at_first/sample_every_n_steps/sample_every_n_epochs.")
+        if args.sample_prompts:
+            for key in ("vae", "text_encoder"):
+                if not getattr(args, key):
+                    config_error(args, key, "required when sample_prompts is configured.")
+            try:
+                load_prompts(args.sample_prompts)
+            except (OSError, ValueError) as exc:
+                config_error(args, "sample_prompts", f"{exc}; provide a valid image prompt file.")
+        for key in ("dataset_config", "dit", "network_weights", "log_tracker_config"):
+            value = getattr(args, key)
+            if value and not os.path.isfile(value):
+                config_error(args, key, f"file {str(value)!r} does not exist; set an existing local file.")
+        for key in ("vae", "text_encoder"):
+            value = getattr(args, key)
+            if args.sample_prompts and not os.path.isfile(value):
+                config_error(args, key, f"file {value!r} does not exist; set an existing local file.")
+        for path in args.base_weights or []:
+            if not os.path.isfile(path):
+                config_error(args, "base_weights", f"file {path!r} does not exist; use local LoRA files.")
+        if args.resume and not args.resume_from_huggingface and not os.path.isdir(args.resume):
+            config_error(args, "resume", "must point to an existing local Accelerate state directory.")
 
     def process_sample_prompts(
         self,
@@ -166,17 +203,12 @@ class Krea2NetworkTrainer(NetworkTrainer):
         vae,
         dit_dtype,
         transformer,
-        discrete_flow_shift,
         sample_steps,
         width,
         height,
-        frame_count,
         generator,
         do_classifier_free_guidance,
-        guidance_scale,
         cfg_scale,
-        image_path=None,
-        control_video_path=None,
     ):
         """Architecture-dependent inference: K2 flow-matching Euler sampler with optional CFG.
 
@@ -184,8 +216,7 @@ class Krea2NetworkTrainer(NetworkTrainer):
         sample parameters (no encoder) and the trainer's DiT + Qwen-Image VAE. CFG (standard
         uncond + scale*(cond-uncond)) is enabled when a negative prompt is present and cfg_scale > 1
         (musubi convention).
-        Resolution-aware mu time-shift uses the K2 raw defaults (y1=0.5, y2=1.15); the distilled
-        (turbo) fixed-mu schedule is not wired here.
+        Resolution-aware mu time-shift uses the K2 Raw defaults (y1=0.5, y2=1.15).
         """
         model = transformer  # SingleStreamDiT
         device = accelerator.device
@@ -224,12 +255,7 @@ class Krea2NetworkTrainer(NetworkTrainer):
         # mu interpolation endpoints (krea2 sample defaults minres=256, maxres=1280).
         x1 = (256 // align) ** 2
         x2 = (1280 // align) ** 2
-        # The distilled Turbo checkpoint was trained at a fixed mu=1.15; the RAW checkpoint uses
-        # resolution-aware mu interpolation. --turbo_dit swaps in that checkpoint directly;
-        # --turbo_lora is a rank-extracted delta between the released raw/turbo checkpoints, so
-        # it approximates the same fixed-mu weights. Pin mu for either.
-        turbo_mu = 1.15 if (args.turbo_dit or getattr(args, "turbo_lora", None)) else None
-        ts = krea2_sampling.timesteps(img.shape[1], sample_steps, x1, x2, y1=0.5, y2=1.15, mu=turbo_mu)
+        ts = krea2_sampling.timesteps(img.shape[1], sample_steps, x1, x2, y1=0.5, y2=1.15)
 
         for tcurr, tprev in tqdm(zip(ts[:-1], ts[1:]), total=len(ts) - 1, desc="Denoising steps"):
             t = torch.full((1,), tcurr, dtype=img.dtype, device=device)
@@ -255,169 +281,15 @@ class Krea2NetworkTrainer(NetworkTrainer):
         pixels = pixels.unsqueeze(2).to(torch.float32).cpu()  # (1, C, 1, H, W) for the grid saver
         return pixels
 
-    # region RAW-train / Turbo-sample (base-weight swap)
-
-    @staticmethod
-    def _named_live_tensors(model):
-        """Map checkpoint-style key -> live parameter/buffer tensor of the (unwrapped) DiT.
-
-        Includes the fp8 ``scale_weight`` buffers; excludes LoRA (its modules live on the
-        network, not as children of the transformer, so they are never touched here).
-
-        Keys are normalized by stripping the ``._orig_mod`` segment that ``torch.compile``
-        inserts when --compile wraps each block (``blocks.0._orig_mod.attn...`` ->
-        ``blocks.0.attn...``), so they line up with the on-disk checkpoint names. We iterate
-        this LIVE mapping and index the source state dict (which is a superset of these keys),
-        never the reverse — that way any extra keys the source might carry are simply ignored,
-        and a missing source key surfaces immediately as a clear KeyError.
-        """
-        live = {}
-        for k, t in itertools.chain(model.named_parameters(), model.named_buffers()):
-            live[k.replace("._orig_mod.", ".")] = t
-        return live
-
-    def _snapshot_weights(self, model) -> dict:
-        """Take an independent CPU snapshot of the model's current base weights (key by key).
-
-        Used once to capture RAW before the first Turbo swap-in. Each entry is a fresh CPU
-        tensor (``copy=True``), so later in-place writes to the live weights never touch it.
-        """
-        return {k: t.detach().to("cpu", copy=True) for k, t in self._named_live_tensors(model).items()}
-
-    def _overwrite_weights(self, model, src: dict):
-        """Copy ``src`` into the model's base weights in place (used by BOTH M1 and M2).
-
-        Critically this writes through ``copy_`` and never reassigns ``weight.data``: the live
-        tensor keeps its exact storage object and device, so it composes with the block-swap
-        offloader (which itself recycles the ``weight.data`` storages) and with fp8 (where the
-        streamed ``weight`` and the resident ``scale_weight`` must stay consistent). Reassigning
-        ``.data`` instead — the old M1 ping-pong — corrupts that recycling and produced pure
-        noise specifically in the M1 x fp8 x block-swap case. ``copy_`` casts dtype and crosses
-        devices, so block-swapped weights that currently live on CPU stay on CPU.
-        """
-        for k, t in self._named_live_tensors(model).items():
-            t.data.copy_(src[k])
-
-    def _free_base_weights(self, model):
-        """Release the live base weight/buffer storages (set ``.data`` to a 0-size tensor).
-
-        Used by the M2 GPU-direct swap to free the current weights *before* loading the
-        replacement to the same device, so the GPU never holds both copies at once (~1x peak
-        instead of ~2x). Each tensor keeps its dtype/device. This reassigns ``.data`` and is
-        therefore only safe without the block-swap offloader — which ``--turbo_dit`` forbids
-        via ``--blocks_to_swap`` (see handle_model_specific_args), so there is no offloader to
-        collide with here (cf. the copy_-only requirement of _overwrite_weights under swap).
-        """
-        for t in self._named_live_tensors(model).values():
-            t.data = t.data.new_empty((0,))
-
-    def _assign_weights(self, model, src: dict):
-        """Attach ``src`` tensors as the model's live base weights by reassigning ``.data``.
-
-        Counterpart to _free_base_weights: the old storage is gone, so we reassign rather than
-        copy_. The Parameter/buffer objects are unchanged, so the LoRA hooks (which read
-        ``module.weight`` at call time) pick up the new weights automatically. Same offloader
-        caveat as _free_base_weights — safe because --turbo_dit excludes block swap.
-        """
-        for k, t in self._named_live_tensors(model).items():
-            t.data = src[k]
-
-    def _build_turbo_lora_network(self, args: argparse.Namespace, accelerator: Accelerator, model):
-        """Build and apply the Turbo LoRA network (frozen, disabled) live on top of RAW."""
-        logger.info(f"Krea 2: loading Turbo LoRA for sampling from {args.turbo_lora}")
-        weights_sd = load_file(args.turbo_lora)
-        turbo_network = lora_krea2.create_arch_network_from_weights(
-            getattr(args, "turbo_lora_multiplier", 1.0), weights_sd, unet=model, for_inference=True
-        )
-        turbo_network.apply_to(None, model, apply_text_encoder=False, apply_unet=True)
-        # strict=False: the current Turbo LoRA extraction carries non-essential keys; revisit
-        # once that extraction is investigated.
-        turbo_network.load_weights(args.turbo_lora)
-        turbo_network.requires_grad_(False)
-        turbo_network.to(accelerator.device)
-        turbo_network.set_enabled(False)
-        self._turbo_lora_network = turbo_network
-        return turbo_network
-
-    def _build_network(self, args, accelerator, transformer, vae, weight_dtype):
-        network = super()._build_network(args, accelerator, transformer, vae, weight_dtype)
-        if network is not None and getattr(args, "turbo_lora", None):
-            self._build_turbo_lora_network(args, accelerator, transformer)
-        return network
-
-    def on_before_sample_images(self, accelerator, args, epoch, steps, vae, transformer, network, sample_parameters, dit_dtype):
-        if args.turbo_dit:
-            # Swap RAW -> Turbo base weights for sample generation (LoRA stays hooked and
-            # applies on top automatically).
-            model = accelerator.unwrap_model(transformer)
-            if args.turbo_dit_cache:
-                # M1: build the resident (fp8-quantized at startup) Turbo stash once and snapshot
-                # the RAW base once, then copy Turbo into the live weights (storage preserved,
-                # see _overwrite_weights). The snapshot must be taken before the first overwrite.
-                if self._turbo_stash is None:
-                    logger.info(f"Krea 2: caching Turbo weights for sampling (M1) from {args.turbo_dit}")
-                    self._turbo_stash = krea2_utils.load_krea2_dit_state_dict(
-                        args.turbo_dit, fp8_scaled=args.fp8_scaled, calc_device=accelerator.device, result_device="cpu"
-                    )
-                if self._raw_stash is None:
-                    logger.info("Krea 2: snapshotting RAW weights for restore (M1)")
-                    self._raw_stash = self._snapshot_weights(model)
-                logger.info("Krea 2: swapping in Turbo weights for sampling (M1)")
-                self._overwrite_weights(model, self._turbo_stash)
-            else:
-                # M2: free the RAW base weights, then load the Turbo weights (re-quantized if
-                # fp8) straight onto the GPU and reassign them. Freeing first keeps the GPU at
-                # ~1x the model size; loading directly to the GPU keeps the CPU peak at ~1
-                # tensor (no full intermediate CPU dict). Safe to reassign here because
-                # --turbo_dit forbids block swap.
-                logger.info(f"Krea 2: loading Turbo weights for sampling (M2, GPU-direct) from {args.turbo_dit}")
-                self._free_base_weights(model)
-                clean_memory_on_device(accelerator.device)
-                turbo_sd = krea2_utils.load_krea2_dit_state_dict(
-                    args.turbo_dit, fp8_scaled=args.fp8_scaled, calc_device=accelerator.device, result_device=accelerator.device
-                )
-                self._assign_weights(model, turbo_sd)
-                del turbo_sd
-                gc.collect()
-                clean_memory_on_device(accelerator.device)
-        elif getattr(args, "turbo_lora", None):
-            logger.info("Krea 2: enabling Turbo LoRA for sampling")
-            self._turbo_lora_network.set_enabled(True)
-
-    def on_after_sample_images(self, accelerator, args, epoch, steps, vae, transformer, network, sample_parameters, dit_dtype):
-        if args.turbo_dit:
-            # Restore RAW base weights after sampling.
-            model = accelerator.unwrap_model(transformer)
-            if args.turbo_dit_cache:
-                logger.info("Krea 2: restoring RAW weights after sampling (M1)")
-                self._overwrite_weights(model, self._raw_stash)  # copy RAW back in place (storage preserved)
-            else:
-                # M2: free the Turbo base weights, then reload RAW (re-quantized if fp8) straight
-                # onto the GPU and reassign -- same GPU-direct, CPU-peak-~1-tensor path as
-                # swap-in. RAW is frozen during training, so reloading it from disk reproduces
-                # it exactly.
-                logger.info(f"Krea 2: restoring RAW weights after sampling (M2, GPU-direct) from {args.dit}")
-                self._free_base_weights(model)
-                clean_memory_on_device(accelerator.device)
-                raw_sd = krea2_utils.load_krea2_dit_state_dict(
-                    args.dit, fp8_scaled=args.fp8_scaled, calc_device=accelerator.device, result_device=accelerator.device
-                )
-                self._assign_weights(model, raw_sd)
-                del raw_sd
-                gc.collect()
-                clean_memory_on_device(accelerator.device)
-            logger.info("Krea 2: RAW weights restored")
-        elif getattr(args, "turbo_lora", None):
-            logger.info("Krea 2: disabling Turbo LoRA after sampling")
-            self._turbo_lora_network.set_enabled(False)
-
-    # endregion RAW-train / Turbo-sample
-
     def load_vae(self, args: argparse.Namespace, vae_dtype: torch.dtype, vae_path: str):
         logger.info(f"Loading VAE model from {args.vae}")
         vae = qwen_image_utils.load_vae(args.vae, input_channels=3, device="cpu", disable_mmap=True)
         vae.eval()
         return vae
+
+    def merge_base_weights(self, args, accelerator, transformer, network_module, weight_dtype):
+        # Already merged by load_transformer before quantization and block placement.
+        pass
 
     def load_transformer(
         self,
@@ -448,6 +320,8 @@ class Krea2NetworkTrainer(NetworkTrainer):
             split_attn=split_attn,
             convrot_int8=args.convrot_int8,
             convrot_int8_bwd=args.convrot_int8_bwd,
+            lora_weights=[load_file(path) for path in args.base_weights] if args.base_weights else None,
+            lora_multipliers=args.base_weights_multiplier,
         )
         return model
 
@@ -565,36 +439,6 @@ def krea2_setup_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
         type=str,
         default=None,
         help="Qwen3-VL-4B text encoder safetensors path (only needed for sample generation during training)",
-    )
-    parser.add_argument(
-        "--turbo_dit",
-        type=str,
-        default=None,
-        help="Distilled Turbo DiT safetensors path. Recommended K2 LoRA workflow: train on RAW (--dit), "
-        "generate samples on Turbo. When set, sample generation swaps the base weights to Turbo (the LoRA "
-        "applies on top automatically) and uses the Turbo schedule (fixed mu=1.15; set CFG off (--l 1) and a "
-        "low step count (--s 8) in the sample prompt). Restored to RAW after each sample step. "
-        "Fully optional: omit to sample on RAW.",
-    )
-    parser.add_argument(
-        "--turbo_dit_cache",
-        action="store_true",
-        help="M1 memory mode for --turbo_dit: keep the (fp8-quantized at startup) Turbo weights resident in "
-        "CPU RAM and ping-pong-swap them in (~1x extra CPU, faster). Default (M2) streams Turbo from disk each "
-        "sample step (re-quantizing if fp8) for ~0x steady CPU at the cost of per-validation load time.",
-    )
-    parser.add_argument(
-        "--turbo_lora",
-        type=str,
-        default=None,
-        help="Turbo LoRA safetensors path: composed live on top of RAW, alongside the LoRA "
-        "being trained. Alternative to --turbo_dit (mutually exclusive with it). See docs/krea2.md.",
-    )
-    parser.add_argument(
-        "--turbo_lora_multiplier",
-        type=float,
-        default=1.0,
-        help="Multiplier for the Turbo LoRA's delta.",
     )
     return parser
 

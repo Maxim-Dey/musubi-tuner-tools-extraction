@@ -1,0 +1,13 @@
+# Paths resolve from the repository root, not from this TOML file.
+[general]
+resolution = [1024, 1024]
+caption_extension = ".txt"
+batch_size = 16
+num_repeats = 1
+enable_bucket = true
+bucket_no_upscale = false
+
+[[datasets]]
+# Replace with a directory containing images and matching .txt captions.
+image_directory = "REPLACE_WITH_IMAGE_DIRECTORY"
+cache_directory = "cache/krea2_raw_lora"

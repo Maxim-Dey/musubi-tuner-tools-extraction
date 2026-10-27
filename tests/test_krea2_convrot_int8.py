@@ -320,8 +320,6 @@ def _trainer_args(**overrides):
         fp8_scaled=False,
         convrot_int8=False,
         convrot_int8_bwd="bf16",
-        turbo_dit=None,
-        turbo_dit_cache=False,
         blocks_to_swap=0,
         sample_prompts=None,
     )
@@ -341,9 +339,13 @@ def test_trainer_rejects_convrot_with_fp8():
         _handle_args(_trainer_args(convrot_int8=True, fp8_base=True, fp8_scaled=True))
 
 
-def test_trainer_rejects_convrot_with_turbo():
-    with pytest.raises(ValueError, match="turbo"):
-        _handle_args(_trainer_args(convrot_int8=True, turbo_dit="turbo.safetensors"))
+def test_trainer_parser_rejects_removed_turbo(capsys):
+    from musubi_tuner.krea2_train_network import krea2_setup_parser
+    from musubi_tuner.training.parser_common import setup_parser_common
+
+    with pytest.raises(SystemExit):
+        krea2_setup_parser(setup_parser_common()).parse_args(["--convrot_int8", "--turbo_dit", "turbo.safetensors"])
+    assert "turbo_dit" in capsys.readouterr().err
 
 
 def test_trainer_rejects_int8_bwd_without_convrot():

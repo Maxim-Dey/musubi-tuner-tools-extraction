@@ -10,6 +10,7 @@ the image outputs.
 
 import argparse
 import logging
+import os
 
 import torch
 
@@ -20,6 +21,7 @@ from musubi_tuner.dataset.architectures import ARCHITECTURE_KREA2
 from musubi_tuner.krea2 import krea2_utils
 
 import musubi_tuner.cache_text_encoder_outputs as cache_text_encoder_outputs
+from musubi_tuner.cache_latents import validate_cache_args as validate_common_cache_args
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -50,11 +52,33 @@ def krea2_setup_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
     return parser
 
 
-def main():
-    parser = cache_text_encoder_outputs.setup_parser_common()
-    parser = krea2_setup_parser(parser)
+def setup_parser():
+    return krea2_setup_parser(cache_text_encoder_outputs.setup_parser_common())
 
-    args = parser.parse_args()
+
+def validate_cache_args(args):
+    validate_common_cache_args(args)
+    if not args.text_encoder:
+        raise ValueError("CLI --text_encoder: checkpoint is required; set a Qwen3-VL safetensors path")
+    if not os.path.isfile(args.text_encoder):
+        raise ValueError(
+            f"CLI --text_encoder: file '{args.text_encoder}' does not exist; set an existing local Qwen3-VL safetensors file"
+        )
+    if args.text_encoder_dtype is not None and args.text_encoder_dtype not in (
+        "bf16",
+        "bfloat16",
+        "fp16",
+        "float16",
+        "fp32",
+        "float32",
+        "float",
+    ):
+        raise ValueError("CLI --text_encoder_dtype: unsupported precision; use bf16, fp16 or fp32")
+
+
+def main():
+    args = setup_parser().parse_args()
+    validate_cache_args(args)
 
     device = args.device if args.device is not None else "cuda" if torch.cuda.is_available() else "cpu"
     device = torch.device(device)

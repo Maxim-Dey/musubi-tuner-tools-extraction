@@ -1,15 +1,9 @@
-"""NetworkTrainer base class shared by all architecture-specific training scripts.
-
-Architecture-specific methods (load_vae, load_transformer, call_dit,
-process_sample_prompts, do_inference, ...) are declared here as abstract hooks
-and implemented by subclasses in each *_train_network.py (see e.g.
-HunyuanVideoNetworkTrainer in hv_train_network.py, WanNetworkTrainer in
-wan_train_network.py, ...).
-"""
+"""Shared LoRA training loop and model hooks used by Krea2 Raw."""
 
 import ast
 import asyncio
 import importlib
+import inspect
 import argparse
 import math
 import os
@@ -39,26 +33,23 @@ from diffusers.optimization import (
 from transformers.optimization import SchedulerType, TYPE_TO_SCHEDULER_FUNCTION
 
 from musubi_tuner.dataset import config_utils
-from musubi_tuner.dataset.architectures import round_down_frame_count
 from musubi_tuner.modules.custom_offloading_utils import BlockSwapConfig
 from musubi_tuner.modules.lr_schedulers import RexLR
 from musubi_tuner.modules.scheduling_flow_match_discrete import FlowMatchDiscreteScheduler
 import musubi_tuner.networks.lora as lora_module
 from musubi_tuner.dataset.config_utils import BlueprintGenerator, ConfigSanitizer
-from musubi_tuner.hv_generate_video import save_images_grid, save_videos_grid
 
 import logging
 
 from musubi_tuner.utils import huggingface_utils, model_utils, train_utils, sai_model_spec
 
-# Helpers that used to live alongside NetworkTrainer in hv_train_network.py.
-# Imported by name so existing method bodies keep working unchanged.
 from musubi_tuner.training.accelerator_setup import (
     clean_memory_on_device,
     collator_class,
     prepare_accelerator,
 )
-from musubi_tuner.training.sampling_prompts import should_sample_images
+from musubi_tuner.training.sampling_prompts import should_sample_images, save_images_grid
+from musubi_tuner.training.parser_common import config_error
 from musubi_tuner.training.timesteps import (
     compute_density_for_timestep_sampling,
     compute_ideogram4_shift_timestep,
@@ -134,17 +125,10 @@ class DiTOutput:
 
 
 class NetworkTrainer:
-    # audio-capable architectures override this class attribute with their AudioSpec so that
-    # dataset construction enables audio (class attribute because _build_dataset runs before
-    # handle_model_specific_args)
-    audio_spec = None
-
     def __init__(self):
         self.blocks_to_swap = None
         self.timestep_range_pool = []
         self.num_timestep_buckets: Optional[int] = None  # for get_bucketed_timestep()
-        self.vae_frame_stride = 4  # legacy frame-grid fallback; some architectures set 1 or use a custom formula
-        self.default_discrete_flow_shift = 14.5  # default value for discrete flow shift for all models TODO may be None is better
 
     # TODO 他のスクリプトと共通化する
     def generate_step_logs(
@@ -222,13 +206,13 @@ class NetworkTrainer:
     def get_optimizer(self, args, trainable_params: list[torch.nn.Parameter]) -> tuple[str, str, torch.optim.Optimizer]:
         # adamw, adamw8bit, adafactor
 
-        optimizer_type = args.optimizer_type.lower()
+        optimizer_type = (args.optimizer_type or "AdamW").lower()
 
         # split optimizer_type and optimizer_args
         optimizer_kwargs = {}
         if args.optimizer_args is not None and len(args.optimizer_args) > 0:
             for arg in args.optimizer_args:
-                key, value = arg.split("=")
+                key, value = arg.split("=", 1)
                 value = ast.literal_eval(value)
                 optimizer_kwargs[key] = value
 
@@ -360,7 +344,7 @@ class NetworkTrainer:
         lr_scheduler_kwargs = {}  # get custom lr_scheduler kwargs
         if args.lr_scheduler_args is not None and len(args.lr_scheduler_args) > 0:
             for arg in args.lr_scheduler_args:
-                key, value = arg.split("=")
+                key, value = arg.split("=", 1)
                 value = ast.literal_eval(value)
                 lr_scheduler_kwargs[key] = value
 
@@ -920,44 +904,50 @@ class NetworkTrainer:
         except Exception:
             pass
 
-        if distributed_state.num_processes <= 1:
-            # If only one device is available, just use the original prompt list. We don't need to care about the distribution of prompts.
-            with torch.no_grad(), accelerator.autocast():
-                for sample_parameter in sample_parameters:
-                    self.sample_image_inference(
-                        accelerator, args, transformer, dit_dtype, sample_resources, save_dir, sample_parameter, epoch, steps
-                    )
-                    clean_memory_on_device(accelerator.device)
-        else:
-            # Creating list with N elements, where each element is a list of prompt_dicts, and N is the number of processes available (number of devices available)
-            # prompt_dicts are assigned to lists based on order of processes, to attempt to time the image creation time to match enum order. Probably only works when steps and sampler are identical.
-            per_process_params = []  # list of lists
-            for i in range(distributed_state.num_processes):
-                per_process_params.append(sample_parameters[i :: distributed_state.num_processes])
-
-            with torch.no_grad():
-                with distributed_state.split_between_processes(per_process_params) as sample_parameter_lists:
-                    for sample_parameter in sample_parameter_lists[0]:
+        try:
+            if distributed_state.num_processes <= 1:
+                # If only one device is available, just use the original prompt list. We don't need to care about the distribution of prompts.
+                with torch.no_grad(), accelerator.autocast():
+                    for sample_parameter in sample_parameters:
                         self.sample_image_inference(
                             accelerator, args, transformer, dit_dtype, sample_resources, save_dir, sample_parameter, epoch, steps
                         )
                         clean_memory_on_device(accelerator.device)
+            else:
+                # Creating list with N elements, where each element is a list of prompt_dicts, and N is the number of processes available (number of devices available)
+                # prompt_dicts are assigned to lists based on order of processes, to attempt to time the image creation time to match enum order. Probably only works when steps and sampler are identical.
+                per_process_params = []  # list of lists
+                for i in range(distributed_state.num_processes):
+                    per_process_params.append(sample_parameters[i :: distributed_state.num_processes])
 
-        torch.set_rng_state(rng_state)
-        if cuda_rng_state is not None:
-            torch.cuda.set_rng_state(cuda_rng_state)
+                with torch.no_grad():
+                    with distributed_state.split_between_processes(per_process_params) as sample_parameter_lists:
+                        for sample_parameter in sample_parameter_lists[0]:
+                            self.sample_image_inference(
+                                accelerator,
+                                args,
+                                transformer,
+                                dit_dtype,
+                                sample_resources,
+                                save_dir,
+                                sample_parameter,
+                                epoch,
+                                steps,
+                            )
+                            clean_memory_on_device(accelerator.device)
 
-        transformer.switch_block_swap_for_training()
-        clean_memory_on_device(accelerator.device)
+        finally:
+            torch.set_rng_state(rng_state)
+            if cuda_rng_state is not None:
+                torch.cuda.set_rng_state(cuda_rng_state)
+            transformer.switch_block_swap_for_training()
+            clean_memory_on_device(accelerator.device)
 
     def sample_image_inference(self, accelerator, args, transformer, dit_dtype, vae, save_dir, sample_parameter, epoch, steps):
         """architecture independent sample images"""
         sample_steps = sample_parameter.get("sample_steps", 20)
         width = sample_parameter.get("width", 256)  # make smaller for faster and memory saving inference
         height = sample_parameter.get("height", 256)
-        frame_count = sample_parameter.get("frame_count", 1)
-        guidance_scale = sample_parameter.get("guidance_scale", self.default_guidance_scale)
-        discrete_flow_shift = sample_parameter.get("discrete_flow_shift", self.default_discrete_flow_shift)
         seed = sample_parameter.get("seed")
         prompt: str = sample_parameter.get("prompt", "")
         cfg_scale = sample_parameter.get("cfg_scale", None)  # None for architecture default
@@ -966,26 +956,6 @@ class NetworkTrainer:
         # round width and height to multiples of 8
         width = (width // 8) * 8
         height = (height // 8) * 8
-
-        frame_count = self.round_sample_frame_count(frame_count)
-
-        if self.i2v_training:
-            image_path = sample_parameter.get("image_path", None)
-            if image_path is None:
-                logger.error("No image_path for i2v model / i2vモデルのサンプル画像生成にはimage_pathが必要です")
-                return
-        else:
-            image_path = None
-
-        if self.control_training:
-            control_video_path = sample_parameter.get("control_video_path", None)
-            if control_video_path is None:
-                logger.error(
-                    "No control_video_path for control model / controlモデルのサンプル画像生成にはcontrol_video_pathが必要です"
-                )
-                return
-        else:
-            control_video_path = None
 
         device = accelerator.device
         if seed is not None:
@@ -1001,10 +971,7 @@ class NetworkTrainer:
         logger.info(f"prompt: {prompt}")
         logger.info(f"height: {height}")
         logger.info(f"width: {width}")
-        logger.info(f"frame count: {frame_count}")
         logger.info(f"sample steps: {sample_steps}")
-        logger.info(f"guidance scale: {guidance_scale}")
-        logger.info(f"discrete flow shift: {discrete_flow_shift}")
         if seed is not None:
             logger.info(f"seed: {seed}")
 
@@ -1014,11 +981,6 @@ class NetworkTrainer:
             logger.info(f"negative prompt: {negative_prompt}")
             logger.info(f"cfg scale: {cfg_scale}")
 
-        if self.i2v_training:
-            logger.info(f"image path: {image_path}")
-        if self.control_training:
-            logger.info(f"control video path: {control_video_path}")
-
         # inference: architecture dependent
         # Check if transformer has self-referencing _orig_mod (compiled model hack)
         # If so, skip eval/train to avoid infinite recursion
@@ -1027,32 +989,30 @@ class NetworkTrainer:
         if not has_self_ref_orig_mod:
             transformer.eval()
 
-        video = self.do_inference(
-            accelerator,
-            args,
-            sample_parameter,
-            vae,
-            dit_dtype,
-            transformer,
-            discrete_flow_shift,
-            sample_steps,
-            width,
-            height,
-            frame_count,
-            generator,
-            do_classifier_free_guidance,
-            guidance_scale,
-            cfg_scale,
-            image_path=image_path,
-            control_video_path=control_video_path,
-        )
+        try:
+            sample = self.do_inference(
+                accelerator,
+                args,
+                sample_parameter,
+                vae,
+                dit_dtype,
+                transformer,
+                sample_steps,
+                width,
+                height,
+                generator,
+                do_classifier_free_guidance,
+                cfg_scale,
+            )
+        finally:
+            if not has_self_ref_orig_mod:
+                transformer.train(was_train)
+            vae.to("cpu")
+            clean_memory_on_device(device)
 
-        if not has_self_ref_orig_mod:
-            transformer.train(was_train)
-
-        # Save video
-        if video is None:
-            logger.error("No video generated / 生成された動画がありません")
+        # Save the single-frame image tensor.
+        if sample is None:
+            logger.error("No sample generated")
             return
 
         ts_str = time.strftime("%Y%m%d%H%M%S", time.localtime())
@@ -1063,37 +1023,16 @@ class NetworkTrainer:
             f"{'' if args.output_name is None else args.output_name + '_'}{num_suffix}_{prompt_idx:02d}_{ts_str}{seed_suffix}"
         )
 
-        self.save_sample(accelerator, args, sample_parameter, video, save_dir, save_path, steps)
-
-        # Move models back to initial state
-        vae.to("cpu")
-        clean_memory_on_device(device)
-
-    def round_sample_frame_count(self, frame_count: int) -> int:
-        """Snaps a sample prompt's frame count (``--f``) onto the architecture's frame grid."""
-        return round_down_frame_count(frame_count, self.architecture, self.vae_frame_stride)
+        self.save_sample(accelerator, args, sample_parameter, sample, save_dir, save_path, steps)
 
     def save_sample(self, accelerator, args, sample_parameter, sample, save_dir: str, save_path: str, steps: int) -> None:
-        """Writes the value ``do_inference`` returned under ``save_dir/save_path`` (a stem without
-        extension) and logs it to wandb when a tracker is active.
-
-        Default: ``sample`` is a ``(N, C, F, H, W)`` video tensor in [0, 1], saved as an image grid
-        for single-frame outputs and as an mp4 otherwise. Architectures whose samples are not a
-        plain video tensor (e.g. joint audio/video) override this.
-        """
+        """Save the single-frame image tensor and log it to an active WandB tracker."""
         prompt_idx = sample_parameter.get("enum", 0)
+        image_paths = save_images_grid(sample, save_dir, save_path, n_rows=sample.shape[0], create_subdir=False)
         wandb_tracker, wandb = wandb_tracker_and_module(accelerator)
-        if sample.shape[2] == 1:
-            # In Qwen-Image-Layered, video is (N, C, 1, H, W) where N=Layers, otherwise (1, C, 1, H, W)
-            image_paths = save_images_grid(sample, save_dir, save_path, n_rows=sample.shape[0], create_subdir=False)
-            if wandb_tracker is not None:
-                for image_path in image_paths:
-                    wandb_tracker.log({f"sample_{prompt_idx}": wandb.Image(image_path)}, step=steps)
-        else:
-            video_path = os.path.join(save_dir, save_path) + ".mp4"
-            save_videos_grid(sample, video_path)
-            if wandb_tracker is not None:
-                wandb_tracker.log({f"sample_{prompt_idx}": wandb.Video(video_path)}, step=steps)
+        if wandb_tracker is not None:
+            for image_path in image_paths:
+                wandb_tracker.log({f"sample_{prompt_idx}": wandb.Image(image_path)}, step=steps)
 
     # region model specific (abstract hooks — implemented by architecture-specific subclasses)
 
@@ -1106,17 +1045,7 @@ class NetworkTrainer:
         raise NotImplementedError("subclass must define `architecture_full_name`")
 
     def handle_model_specific_args(self, args: argparse.Namespace):
-        # Subclasses must set: self._i2v_training, self._control_training, self.default_guidance_scale.
-        # They may also set arch-specific state like self.default_discrete_flow_shift, self.vae_frame_stride.
         raise NotImplementedError("subclass must implement `handle_model_specific_args`")
-
-    @property
-    def i2v_training(self) -> bool:
-        return self._i2v_training
-
-    @property
-    def control_training(self) -> bool:
-        return self._control_training
 
     def convert_weight_keys(self, weights_sd: dict[str, torch.Tensor], network_module: lora_module):
         # Default: assume the saved LoRA is already in this project's native format.
@@ -1164,17 +1093,12 @@ class NetworkTrainer:
         vae,
         dit_dtype,
         transformer,
-        discrete_flow_shift,
         sample_steps,
         width,
         height,
-        frame_count,
         generator,
         do_classifier_free_guidance,
-        guidance_scale,
         cfg_scale,
-        image_path=None,
-        control_video_path=None,
     ):
         """Architecture-dependent sample inference used during training."""
         raise NotImplementedError("subclass must implement `do_inference`")
@@ -1384,8 +1308,7 @@ class NetworkTrainer:
         threads through unchanged to ``sample_image_inference`` and the sample-image
         hooks. The default implementation covers single-VAE architectures: it parses
         prompts via ``process_sample_prompts`` and returns the sampling VAE as the
-        resources. Architectures whose sampling needs more (e.g. separate video and
-        audio VAEs) override this wholesale and return their own payload.
+        resources.
         Both values are None when ``--sample_prompts`` is not set.
         """
         sample_parameters = None
@@ -1528,11 +1451,279 @@ class NetworkTrainer:
             network_dtype,
         )
 
+    def validate_training_args(self, args):
+        """Check configuration without creating models or advancing the training RNG."""
+        required = ("dataset_config", "dit", "output_dir", "output_name", "network_module")
+        for key in required:
+            if not getattr(args, key, None):
+                config_error(args, key, "required; set it in TOML or on the CLI.")
+        for key in (
+            "max_train_steps",
+            "max_train_epochs",
+            "gradient_accumulation_steps",
+            "network_dim",
+            "save_every_n_steps",
+            "save_every_n_epochs",
+            "sample_every_n_steps",
+            "sample_every_n_epochs",
+        ):
+            value = getattr(args, key)
+            if value is not None and value <= 0:
+                config_error(args, key, "must be positive; use an omitted value to disable optional intervals.")
+        for key in (
+            "max_data_loader_n_workers",
+            "blocks_to_swap",
+            "max_grad_norm",
+            "scale_weight_norms",
+            "save_last_n_steps",
+            "save_last_n_epochs",
+            "save_last_n_steps_state",
+            "save_last_n_epochs_state",
+        ):
+            value = getattr(args, key)
+            if value is not None and value < 0:
+                config_error(args, key, "must be nonnegative.")
+        if args.persistent_data_loader_workers and args.max_data_loader_n_workers == 0:
+            config_error(
+                args, "persistent_data_loader_workers", "requires max_data_loader_n_workers > 0; disable it or add workers."
+            )
+        if args.gradient_checkpointing_cpu_offload and not args.gradient_checkpointing:
+            config_error(args, "gradient_checkpointing_cpu_offload", "requires gradient_checkpointing=true.")
+        if args.block_swap_ring_size < 1:
+            config_error(args, "block_swap_ring_size", "must be at least 1.")
+        if args.blocks_to_swap and args.block_swap_h2d_only and not args.gradient_checkpointing:
+            config_error(args, "block_swap_h2d_only", "requires gradient_checkpointing=true for LoRA training.")
+        if args.fp8_scaled and not args.fp8_base:
+            config_error(args, "fp8_scaled", "requires fp8_base=true.")
+        attentions = [key for key in ("sdpa", "flash_attn", "flash3", "xformers", "sage_attn") if getattr(args, key)]
+        if len(attentions) != 1:
+            config_error(args, "sdpa", "select exactly one of sdpa, flash_attn, flash3 or xformers.")
+        if args.sage_attn:
+            config_error(args, "sage_attn", "does not support training; select sdpa, flash_attn, flash3 or xformers.")
+        if args.dim_from_weights and not args.network_weights:
+            config_error(args, "dim_from_weights", "requires network_weights pointing to a LoRA safetensors file.")
+        if args.network_dropout is not None and not 0 <= args.network_dropout <= 1:
+            config_error(args, "network_dropout", "must be between 0 and 1.")
+        lower = args.min_timestep if args.min_timestep is not None else 0
+        upper = args.max_timestep if args.max_timestep is not None else 1000
+        if not 0 <= lower < upper <= 1000:
+            config_error(args, "min_timestep", "require 0 <= min_timestep < max_timestep <= 1000.")
+        for key in ("lr_warmup_steps", "lr_decay_steps"):
+            value = getattr(args, key)
+            if value is None or value < 0:
+                config_error(args, key, "use a nonnegative integer step count or float ratio.")
+        if args.logit_std < 0:
+            config_error(args, "logit_std", "must be nonnegative.")
+        if args.lr_scheduler_min_lr_ratio is not None and args.lr_scheduler_min_lr_ratio < 0:
+            config_error(args, "lr_scheduler_min_lr_ratio", "must be nonnegative.")
+        if args.log_with in ("tensorboard", "all") and not args.logging_dir:
+            config_error(args, "logging_dir", "required when log_with is tensorboard or all.")
+        if args.log_tracker_config is not None:
+            try:
+                self._tracker_init_kwargs = toml.load(args.log_tracker_config)
+            except (OSError, ValueError) as exc:
+                config_error(
+                    args,
+                    "log_tracker_config",
+                    f"cannot read {args.log_tracker_config!r}: {exc}; provide a valid tracker TOML file.",
+                )
+        if args.metadata_reso is not None:
+            try:
+                sai_model_spec.build_metadata(None, self.architecture, 0, reso=args.metadata_reso)
+            except (TypeError, ValueError, IndexError) as exc:
+                config_error(args, "metadata_reso", f"invalid resolution {args.metadata_reso!r}: {exc}; use '1024' or '1024,768'.")
+        if args.base_weights_multiplier and (not args.base_weights or len(args.base_weights_multiplier) > len(args.base_weights)):
+            config_error(args, "base_weights_multiplier", "provide at most one multiplier per base_weights path.")
+        if args.compile:
+            from torch._dynamo.backends.registry import lookup_backend
+
+            try:
+                lookup_backend(args.compile_backend)
+            except Exception as exc:
+                config_error(
+                    args,
+                    "compile_backend",
+                    f"unavailable compiler backend {args.compile_backend!r}: {exc}; choose an installed backend.",
+                )
+        self._validate_optimizer_scheduler_args(args)
+
+    @staticmethod
+    def _parse_option_pairs(args, key, literal=True):
+        result = {}
+        for item in getattr(args, key) or []:
+            if "=" not in item:
+                config_error(args, key, f"invalid {item!r}; use key=value entries.")
+            name, value = item.split("=", 1)
+            if not name or name in result:
+                config_error(args, key, f"empty or duplicate key {name!r}; provide each key once.")
+            if literal:
+                try:
+                    value = ast.literal_eval(value)
+                except (ValueError, SyntaxError) as exc:
+                    config_error(args, key, f"invalid {name}={value!r}: {exc}; use a Python literal.")
+            result[name] = value
+        return result
+
+    def _validate_optimizer_scheduler_args(self, args):
+        optimizer_kwargs = self._parse_option_pairs(args, "optimizer_args")
+        scheduler_kwargs = self._parse_option_pairs(args, "lr_scheduler_args")
+        name = args.optimizer_type or "AdamW"
+        try:
+            if name.lower() == "adamw":
+                optimizer_class = torch.optim.AdamW
+            elif name.lower() == "adamw8bit":
+                optimizer_class = importlib.import_module("bitsandbytes.optim").AdamW8bit
+            elif name.lower() == "adafactor":
+                optimizer_class = transformers.optimization.Adafactor
+            else:
+                module, _, cls = name.rpartition(".")
+                optimizer_class = getattr(importlib.import_module(module) if module else torch.optim, cls or name)
+            inspect.signature(optimizer_class).bind([], lr=args.learning_rate, **optimizer_kwargs)
+            # Exercise the documented built-ins on one transient CPU scalar, without a step.
+            # Dynamic optimizers are checked by signature only; their constructors may require a device.
+            if optimizer_class in (torch.optim.AdamW, transformers.optimization.Adafactor):
+                check_kwargs = optimizer_kwargs.copy()
+                check_lr = args.learning_rate
+                if optimizer_class is transformers.optimization.Adafactor:
+                    check_kwargs.setdefault("relative_step", True)
+                    if check_kwargs.get("warmup_init", False):
+                        check_kwargs["relative_step"] = True
+                    if check_kwargs["relative_step"]:
+                        check_lr = None
+                optimizer_class([torch.nn.Parameter(torch.zeros(1))], lr=check_lr, **check_kwargs)
+        except (ImportError, AttributeError, TypeError, ValueError) as exc:
+            config_error(
+                args, "optimizer_type", f"cannot configure {name!r}: {exc}; check the class, dependency and optimizer_args."
+            )
+        if args.learning_rate < 0:
+            config_error(args, "learning_rate", "must be nonnegative.")
+        if args.lr_scheduler_type:
+            try:
+                module, _, cls = args.lr_scheduler_type.rpartition(".")
+                scheduler_class = getattr(
+                    importlib.import_module(module) if module else torch.optim.lr_scheduler, cls or args.lr_scheduler_type
+                )
+                inspect.signature(scheduler_class).bind(object(), **scheduler_kwargs)
+                if scheduler_class.__module__ == "torch.optim.lr_scheduler":
+                    # Run the supported torch scheduler's own arithmetic on a CPU scalar.
+                    # A signature/constructor alone misses deferred errors such as StepLR(step_size='bad').
+                    probe_optimizer = torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=args.learning_rate)
+                    probe_scheduler = scheduler_class(probe_optimizer, **scheduler_kwargs)
+                    closed_form = getattr(probe_scheduler, "_get_closed_form_lr", None)
+                    if closed_form is not None:
+                        probe_scheduler.last_epoch = 1
+                        closed_form()
+            except (ImportError, AttributeError, TypeError, ValueError, ZeroDivisionError, KeyError) as exc:
+                config_error(
+                    args,
+                    "lr_scheduler_type",
+                    f"cannot configure scheduler: {exc}; check the class, dependency and lr_scheduler_args.",
+                )
+            return
+        scheduler = args.lr_scheduler
+        if scheduler.startswith("adafactor"):
+            if optimizer_class is not transformers.optimization.Adafactor:
+                config_error(args, "lr_scheduler", "adafactor scheduler requires optimizer_type=Adafactor.")
+            if ":" in scheduler:
+                try:
+                    float(scheduler.split(":", 1)[1])
+                except ValueError:
+                    config_error(args, "lr_scheduler", "use adafactor or adafactor:<initial_lr>.")
+        elif scheduler not in ("rex", DiffusersSchedulerType.PIECEWISE_CONSTANT.value):
+            try:
+                SchedulerType(scheduler)
+            except ValueError:
+                config_error(args, "lr_scheduler", "unknown scheduler; use --help names or lr_scheduler_type for a custom class.")
+        relative_adafactor = optimizer_class is transformers.optimization.Adafactor and (
+            optimizer_kwargs.get("relative_step", True) or optimizer_kwargs.get("warmup_init", False)
+        )
+        if (
+            scheduler == SchedulerType.COSINE_WITH_MIN_LR.value
+            and not relative_adafactor
+            and not name.lower().endswith("schedulefree")
+        ):
+            min_lr = scheduler_kwargs.get("min_lr")
+            if args.lr_scheduler_min_lr_ratio is None and min_lr is None:
+                config_error(
+                    args,
+                    "lr_scheduler_min_lr_ratio",
+                    "cosine_with_min_lr requires this ratio or lr_scheduler_args=['min_lr=<value>']; set one minimum.",
+                )
+            if args.lr_scheduler_min_lr_ratio is not None and min_lr is not None:
+                config_error(args, "lr_scheduler_min_lr_ratio", "choose this ratio or min_lr in lr_scheduler_args, not both.")
+        if scheduler.startswith("adafactor") and not relative_adafactor and ":" not in scheduler:
+            config_error(
+                args, "lr_scheduler", "adafactor with relative_step=false needs adafactor:<initial_lr> or another scheduler."
+            )
+        if scheduler in ("constant",) or scheduler.startswith("adafactor") or relative_adafactor:
+            if args.lr_warmup_steps != 0 and not name.lower().endswith("schedulefree"):
+                config_error(
+                    args, "lr_warmup_steps", "this scheduler does not accept warmup; set 0 or choose constant_with_warmup."
+                )
+        if name.lower().endswith("schedulefree"):
+            return  # The existing schedule-free path uses a dummy scheduler.
+        if scheduler.startswith("adafactor") or relative_adafactor:
+            if scheduler_kwargs:
+                config_error(args, "lr_scheduler_args", "AdafactorSchedule accepts no additional scheduler arguments; remove them.")
+            return
+        if scheduler == "rex":
+            function = RexLR
+            generated = {
+                "max_lr": args.learning_rate,
+                "min_lr": args.learning_rate * 0.01,
+                "num_steps": args.max_train_steps,
+                "num_warmup_steps": args.lr_warmup_steps,
+            }
+        elif scheduler == DiffusersSchedulerType.PIECEWISE_CONSTANT.value:
+            function = DIFFUSERS_TYPE_TO_SCHEDULER_FUNCTION[DiffusersSchedulerType(scheduler)]
+            generated = {}
+        else:
+            scheduler_kind = SchedulerType(scheduler)
+            function = TYPE_TO_SCHEDULER_FUNCTION[scheduler_kind]
+            generated = {}
+            if scheduler_kind != SchedulerType.CONSTANT:
+                generated["num_warmup_steps"] = args.lr_warmup_steps
+            if scheduler_kind not in (SchedulerType.CONSTANT, SchedulerType.CONSTANT_WITH_WARMUP, SchedulerType.INVERSE_SQRT):
+                generated["num_training_steps"] = args.max_train_steps
+            if scheduler_kind == SchedulerType.INVERSE_SQRT:
+                generated["timescale"] = args.lr_scheduler_timescale
+            if scheduler_kind in (SchedulerType.COSINE_WITH_RESTARTS, SchedulerType.COSINE_WITH_MIN_LR):
+                generated["num_cycles"] = args.lr_scheduler_num_cycles
+            if scheduler_kind == SchedulerType.POLYNOMIAL:
+                generated["power"] = args.lr_scheduler_power
+            if scheduler_kind == SchedulerType.COSINE_WITH_MIN_LR:
+                generated["min_lr_rate"] = args.lr_scheduler_min_lr_ratio
+            if scheduler_kind == SchedulerType.WARMUP_STABLE_DECAY:
+                generated.pop("num_training_steps", None)
+                generated.update(
+                    num_stable_steps=args.max_train_steps,
+                    num_decay_steps=args.lr_decay_steps,
+                    num_cycles=args.lr_scheduler_num_cycles / 2,
+                    min_lr_ratio=args.lr_scheduler_min_lr_ratio or 0.0,
+                )
+            elif scheduler_kind not in (
+                SchedulerType.CONSTANT,
+                SchedulerType.CONSTANT_WITH_WARMUP,
+                SchedulerType.INVERSE_SQRT,
+                SchedulerType.COSINE_WITH_RESTARTS,
+                SchedulerType.POLYNOMIAL,
+                SchedulerType.COSINE_WITH_MIN_LR,
+                SchedulerType.LINEAR,
+                SchedulerType.COSINE,
+            ):
+                generated["num_decay_steps"] = args.lr_decay_steps
+        try:
+            inspect.signature(function).bind(object(), **generated, **scheduler_kwargs)
+        except (TypeError, ValueError) as exc:
+            config_error(args, "lr_scheduler_args", f"cannot configure {scheduler!r}: {exc}; correct the scheduler arguments.")
+
     def _validate_args_and_init(self, args) -> bool:
         """Validate required args, configure CUDA flags, handle `--show_timesteps`.
 
         Returns False if training should stop early (e.g. `--show_timesteps`).
         """
+        self.validate_training_args(args)
+
         if torch.cuda.is_available():
             if args.cuda_allow_tf32:
                 torch.backends.cuda.matmul.allow_tf32 = True
@@ -1541,29 +1732,6 @@ class NetworkTrainer:
             if args.cuda_cudnn_benchmark:
                 torch.backends.cudnn.benchmark = True
                 logger.info("Enabled cuDNN benchmark / cuDNNベンチマークを有効化しました")
-
-        # check required arguments
-        if args.dataset_config is None:
-            raise ValueError("dataset_config is required / dataset_configが必要です")
-        if args.dit is None:
-            raise ValueError("path to DiT model is required / DiTモデルのパスが必要です")
-        if args.output_dir is None:
-            raise ValueError("output_dir is required / output_dirが必要です")
-        if args.output_name is None:
-            raise ValueError("output_name is required / output_nameが必要です")
-        assert not args.fp8_scaled or args.fp8_base, "fp8_scaled requires fp8_base / fp8_scaledはfp8_baseが必要です"
-
-        if args.sage_attn:
-            raise ValueError(
-                "SageAttention doesn't support training currently. Please use `--sdpa` or `--xformers` etc. instead."
-                " / SageAttentionは現在学習をサポートしていないようです。`--sdpa`や`--xformers`などの他のオプションを使ってください"
-            )
-
-        if args.disable_numpy_memmap:
-            logger.info(
-                "Disabling numpy memory mapping for model loading (for Wan, FramePack and Qwen-Image). This may lead to higher memory usage but can speed up loading in some cases."
-                " / モデル読み込み時のnumpyメモリマッピングを無効にします（Wan、FramePack、Qwen-Imageでのみ有効）。これによりメモリ使用量が増える可能性がありますが、場合によっては読み込みが高速化されることがあります"
-            )
 
         # check model specific arguments
         self.handle_model_specific_args(args)
@@ -1602,7 +1770,6 @@ class NetworkTrainer:
             training=True,
             num_timestep_buckets=self.num_timestep_buckets,
             shared_epoch=current_epoch,
-            audio_spec=self.audio_spec,
         )
 
         if train_dataset_group.num_train_items == 0:
@@ -1630,7 +1797,6 @@ class NetworkTrainer:
         elif args.mixed_precision == "bf16":
             weight_dtype = torch.bfloat16
 
-        # HunyuanVideo: bfloat16 or float16, Wan2.1: bfloat16
         dit_dtype = torch.bfloat16 if args.dit_dtype is None else model_utils.str_to_dtype(args.dit_dtype)
         dit_weight_dtype = (None if args.fp8_scaled else torch.float8_e4m3fn) if args.fp8_base else dit_dtype
         logger.info(f"DiT precision: {dit_dtype}, weight precision: {dit_weight_dtype}")
@@ -1691,13 +1857,13 @@ class NetworkTrainer:
         net_kwargs = {}
         if args.network_args is not None:
             for net_arg in args.network_args:
-                key, value = net_arg.split("=")
+                key, value = net_arg.split("=", 1)
                 net_kwargs[key] = value
 
         if args.dim_from_weights:
-            logger.info(f"Loading network from weights: {args.dim_from_weights}")
-            weights_sd = load_file(args.dim_from_weights)
-            network, _ = network_module.create_arch_network_from_weights(1, weights_sd, unet=transformer)
+            logger.info(f"Loading network from weights: {args.network_weights}")
+            weights_sd = load_file(args.network_weights)
+            network = network_module.create_arch_network_from_weights(1, weights_sd, unet=transformer)
         else:
             # We use the name create_arch_network for compatibility with LyCORIS
             if hasattr(network_module, "create_arch_network"):
@@ -1808,23 +1974,9 @@ class NetworkTrainer:
     ):
         # prepare training model. accelerator does some magic here
 
-        # experimental feature: train the model with gradients in fp16/bf16
+        # LoRA parameters/gradients remain fp32; mixed_precision controls autocast.
         network_dtype = torch.float32
-        args.full_fp16 = args.full_bf16 = False  # temporary disabled because stochastic rounding is not supported yet
-        if args.full_fp16:
-            assert args.mixed_precision == "fp16", (
-                "full_fp16 requires mixed precision='fp16' / full_fp16を使う場合はmixed_precision='fp16'を指定してください。"
-            )
-            accelerator.print("enable full fp16 training.")
-            network_dtype = weight_dtype
-            network.to(network_dtype)
-        elif args.full_bf16:
-            assert args.mixed_precision == "bf16", (
-                "full_bf16 requires mixed precision='bf16' / full_bf16を使う場合はmixed_precision='bf16'を指定してください。"
-            )
-            accelerator.print("enable full bf16 training.")
-            network_dtype = weight_dtype
-            network.to(network_dtype)
+        args.full_fp16 = args.full_bf16 = False
 
         if dit_weight_dtype != dit_dtype and dit_weight_dtype is not None:
             logger.info(f"casting model to {dit_weight_dtype}")
@@ -1851,16 +2003,6 @@ class NetworkTrainer:
             transformer.eval()
 
         accelerator.unwrap_model(network).prepare_grad_etc(transformer)
-
-        if args.full_fp16:
-            # patch accelerator for fp16 training
-            # def patch_accelerator_for_fp16_training(accelerator):
-            org_unscale_grads = accelerator.scaler._unscale_grads_
-
-            def _unscale_grads_replacer(optimizer, inv_scale, found_inf, allow_fp16):
-                return org_unscale_grads(optimizer, inv_scale, found_inf, True)
-
-            accelerator.scaler._unscale_grads_ = _unscale_grads_replacer
 
         return transformer, network, optimizer, train_dataloader, lr_scheduler, training_model, network_dtype
 
@@ -1945,7 +2087,7 @@ class NetworkTrainer:
         net_kwargs = {}
         if args.network_args is not None:
             for net_arg in args.network_args:
-                key, value = net_arg.split("=")
+                key, value = net_arg.split("=", 1)
                 net_kwargs[key] = value
 
         # TODO refactor metadata creation and move to util
@@ -1985,7 +2127,6 @@ class NetworkTrainer:
             "ss_logit_mean": args.logit_mean,
             "ss_logit_std": args.logit_std,
             "ss_mode_scale": args.mode_scale,
-            "ss_guidance_scale": args.guidance_scale,
             "ss_timestep_sampling": args.timestep_sampling,
             "ss_sigmoid_scale": args.sigmoid_scale,
             "ss_discrete_flow_shift": args.discrete_flow_shift,
@@ -2040,7 +2181,7 @@ class NetworkTrainer:
             if args.wandb_run_name:
                 init_kwargs["wandb"] = {"name": args.wandb_run_name}
             if args.log_tracker_config is not None:
-                init_kwargs = toml.load(args.log_tracker_config)
+                init_kwargs = self._tracker_init_kwargs
             accelerator.init_trackers(
                 "network_train" if args.log_tracker_name is None else args.log_tracker_name,
                 config=train_utils.get_sanitized_config_or_none(args),

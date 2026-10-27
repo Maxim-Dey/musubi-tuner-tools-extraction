@@ -140,55 +140,6 @@ def load_krea2_dit(
     return dit
 
 
-def load_krea2_dit_state_dict(
-    dit_path: str,
-    fp8_scaled: bool = False,
-    calc_device: Union[str, torch.device] = "cpu",
-    result_device: Union[str, torch.device] = "cpu",
-    config: SingleMMDiTConfig = single_mmdit_large_wide,
-) -> dict:
-    """Produce a Krea 2 DiT state dict matching a model loaded via ``load_krea2_dit``.
-
-    Unlike ``load_krea2_dit`` this builds no ``nn.Module`` — it returns only the weights,
-    for swapping the base weights of an already-built model in place (e.g. RAW-train /
-    Turbo-sample). When ``fp8_scaled`` is True the per-block Linears are dynamically
-    quantized exactly as in ``load_krea2_dit`` (quantization runs on ``calc_device``), so
-    the returned keys include the matching ``.scale_weight`` entries and line up 1:1 with
-    the live model's ``named_parameters()`` + ``named_buffers()``. The result is moved to
-    ``result_device``.
-
-    When ``result_device`` equals ``calc_device`` (e.g. both the GPU, used by the M2 turbo/raw
-    swap), the dict is built straight on that device with no full intermediate CPU dict — the
-    CPU peak stays at ~1 tensor. When ``result_device`` is CPU (e.g. the M1 resident stash),
-    the fp8 path quantizes on ``calc_device`` and then lands the dict on CPU.
-    """
-    calc_dev = torch.device(calc_device)
-    rd = torch.device(result_device)
-    # Keep the fp8-quantized tensors on calc_device when that is also the result device, so the
-    # dict never round-trips through a full CPU copy (the M2 GPU-direct swap path).
-    move_to_device = calc_dev == rd
-
-    if fp8_scaled:
-        sd = load_safetensors_with_lora_and_fp8(
-            model_files=dit_path,
-            lora_weights_list=None,
-            lora_multipliers=None,
-            fp8_optimization=True,
-            calc_device=calc_dev,
-            move_to_device=move_to_device,
-            dit_weight_dtype=None,
-            target_keys=KREA2_FP8_OPTIMIZATION_TARGET_KEYS,
-            exclude_keys=KREA2_FP8_OPTIMIZATION_EXCLUDE_KEYS,
-        )
-    else:
-        # Load without mmap (disable_mmap=True) to avoid the official load_file's transient ~2x
-        # RAM, file locking, and lazy disk reads. Load directly to result_device in bf16.
-        sd = load_safetensors(dit_path, device=result_device, disable_mmap=True, dtype=torch.bfloat16)
-
-    sd = {k: v.to(rd) for k, v in sd.items()}
-    return sd
-
-
 def load_krea2_text_encoder(
     path: str,
     dtype: torch.dtype = torch.bfloat16,

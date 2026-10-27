@@ -1,60 +1,41 @@
+import os
 from pathlib import Path
+import subprocess
+import sys
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_ideogram4_top_level_entrypoints_exist():
-    expected = {
-        "ideogram4_cache_latents.py": "musubi_tuner.ideogram4_cache_latents",
-        "ideogram4_cache_text_encoder_outputs.py": "musubi_tuner.ideogram4_cache_text_encoder_outputs",
-        "ideogram4_generate_image.py": "musubi_tuner.ideogram4_generate_image",
-        "ideogram4_train_network.py": "musubi_tuner.ideogram4_train_network",
-    }
-
-    for script_name, module_name in expected.items():
-        script = ROOT / script_name
-        assert script.exists(), f"missing top-level entrypoint: {script_name}"
-        assert script.read_text(encoding="utf-8") == (f'from {module_name} import main\n\nif __name__ == "__main__":\n    main()\n')
-
-
-def test_minimax_h3_latent_cache_entrypoint_exists():
-    script = ROOT / "minimax_h3_cache_latents.py"
-
-    assert script.exists(), "missing top-level entrypoint: minimax_h3_cache_latents.py"
-    assert script.read_text(encoding="utf-8") == (
-        'from musubi_tuner.minimax_h3_cache_latents import main\n\nif __name__ == "__main__":\n    main()\n'
+@pytest.mark.parametrize(
+    "script, expected_option",
+    [
+        ("krea2_cache_latents.py", "--vae"),
+        ("krea2_cache_text_encoder_outputs.py", "--text_encoder"),
+        ("krea2_train_network.py", "--config_file"),
+    ],
+)
+def test_retained_root_command_imports_and_displays_help(script, expected_option):
+    env = dict(os.environ)
+    env.update(
+        PYTHONPATH=str(ROOT / "src"),
+        HF_HUB_OFFLINE="1",
+        TRANSFORMERS_OFFLINE="1",
+        CUDA_VISIBLE_DEVICES="",
+        PYTHONIOENCODING="utf-8",
     )
-
-
-def test_minimax_h3_text_cache_entrypoint_exists():
-    script = ROOT / "minimax_h3_cache_text_encoder_outputs.py"
-
-    assert script.exists(), "missing top-level entrypoint: minimax_h3_cache_text_encoder_outputs.py"
-    assert script.read_text(encoding="utf-8") == (
-        'from musubi_tuner.minimax_h3_cache_text_encoder_outputs import main\n\nif __name__ == "__main__":\n    main()\n'
+    result = subprocess.run(
+        [sys.executable, str(ROOT / script), "--help"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
     )
-
-
-def test_minimax_h3_training_entrypoint_exists():
-    script = ROOT / "minimax_h3_train_network.py"
-
-    assert script.exists(), "missing top-level entrypoint: minimax_h3_train_network.py"
-    assert script.read_text(encoding="utf-8") == (
-        'from musubi_tuner.minimax_h3_train_network import main\n\nif __name__ == "__main__":\n    main()\n'
-    )
-
-
-def test_minimax_h3_training_module_is_directly_executable():
-    module = ROOT / "src" / "musubi_tuner" / "minimax_h3_train_network.py"
-
-    assert module.read_text(encoding="utf-8").endswith('\n\nif __name__ == "__main__":\n    main()\n')
-
-
-def test_minimax_h3_generation_entrypoint_exists():
-    script = ROOT / "minimax_h3_generate_video.py"
-
-    assert script.exists(), "missing top-level entrypoint: minimax_h3_generate_video.py"
-    assert script.read_text(encoding="utf-8") == (
-        'from musubi_tuner.minimax_h3_generate_video import main\n\nif __name__ == "__main__":\n    main()\n'
-    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "usage:" in result.stdout
+    assert "--dataset_config" in result.stdout
+    assert expected_option in result.stdout

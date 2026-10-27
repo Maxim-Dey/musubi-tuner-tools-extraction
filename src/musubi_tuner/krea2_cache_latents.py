@@ -6,6 +6,7 @@ and `encode_pixels_to_latents` directly. Plain text-to-image only (no control/ed
 """
 
 import logging
+import os
 from typing import List
 
 import torch
@@ -26,9 +27,7 @@ def encode_and_save_batch(vae: qwen_image_autoencoder_kl.AutoencoderKLQwenImage,
     # Stack batch into (B, C, 1, H, W) in RGB order, normalized to [-1, 1].
     contents = []
     for item in batch:
-        content = item.content
-        content = content[0] if isinstance(content, list) else content  # (H, W, C)
-        contents.append(torch.from_numpy(content))
+        contents.append(torch.from_numpy(item.content))  # (H, W, C)
     contents = torch.stack(contents, dim=0)  # (B, H, W, C)
     contents = contents.permute(0, 3, 1, 2)  # (B, C, H, W)
     contents = contents.unsqueeze(2)  # (B, C, 1, H, W), Qwen-Image VAE needs F axis
@@ -43,14 +42,21 @@ def encode_and_save_batch(vae: qwen_image_autoencoder_kl.AutoencoderKLQwenImage,
         save_latent_cache_krea2(item_info=item, latent=target_latent)
 
 
+def setup_parser():
+    return cache_latents.setup_parser_common()
+
+
+def validate_cache_args(args):
+    cache_latents.validate_cache_args(args)
+    if not args.vae and args.debug_mode is None:
+        raise ValueError("CLI --vae: checkpoint is required; set the Qwen-Image VAE safetensors path")
+    if args.debug_mode is None and not os.path.isfile(args.vae):
+        raise ValueError(f"CLI --vae: file '{args.vae}' does not exist; set an existing local Qwen-Image VAE safetensors file")
+
+
 def main():
-    parser = cache_latents.setup_parser_common()
-    parser = cache_latents.hv_setup_parser(parser)  # VAE
-
-    args = parser.parse_args()
-
-    if args.vae_dtype is not None:
-        raise ValueError("VAE dtype is not supported in Krea 2 (uses the Qwen-Image VAE default).")
+    args = setup_parser().parse_args()
+    validate_cache_args(args)
 
     device = args.device if hasattr(args, "device") and args.device else ("cuda" if torch.cuda.is_available() else "cpu")
     device = torch.device(device)
@@ -65,12 +71,8 @@ def main():
     datasets = train_dataset_group.datasets
 
     if args.debug_mode is not None:
-        cache_latents.show_datasets(
-            datasets, args.debug_mode, args.console_width, args.console_back, args.console_num_images, fps=16
-        )
+        cache_latents.show_datasets(datasets, args.debug_mode, args.console_width, args.console_back, args.console_num_images)
         return
-
-    assert args.vae is not None, "VAE checkpoint is required"
 
     logger.info(f"Loading VAE model from {args.vae}")
     vae = qwen_image_utils.load_vae(args.vae, 3, device=device, disable_mmap=True)

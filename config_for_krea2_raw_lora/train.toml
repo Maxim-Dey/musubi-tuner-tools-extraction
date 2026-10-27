@@ -1,0 +1,31 @@
+# Run from the repository root. Replace the three model paths with local safetensors files.
+dit = "REPLACE_WITH_RAW_DIT.safetensors"
+vae = "REPLACE_WITH_QWEN_IMAGE_VAE.safetensors"
+text_encoder = "REPLACE_WITH_QWEN3_VL_4B.safetensors"
+dataset_config = "config_for_krea2_raw_lora/dataset.toml"
+
+network_module = "networks.lora_krea2"
+network_dim = 32
+network_alpha = 32
+mixed_precision = "bf16"
+sdpa = true
+gradient_checkpointing = true
+optimizer_type = "AdamW"
+learning_rate = 0.0001
+lr_scheduler = "constant"
+lr_warmup_steps = 0
+
+timestep_sampling = "krea2_shift"
+weighting_scheme = "none"
+max_train_steps = 1000
+gradient_accumulation_steps = 1
+max_data_loader_n_workers = 2
+seed = 42
+
+output_dir = "output/krea2_raw_lora"
+output_name = "krea2_raw_lora"
+save_every_n_steps = 200
+save_state = true
+save_state_on_train_end = true
+sample_prompts = "config_for_krea2_raw_lora/sample_prompts.txt"
+sample_every_n_steps = 200

@@ -9,6 +9,8 @@ import argparse
 import logging
 import os
 import pathlib
+import math
+import sys
 
 import toml
 from accelerate.utils import DynamoBackend
@@ -71,8 +73,8 @@ def _add_attention_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--flash3",
         action="store_true",
-        help="use FlashAttention 3 for CrossAttention, requires FlashAttention 3, HunyuanVideo does not support this yet"
-        " / CrossAttentionにFlashAttention 3を使う、FlashAttention 3が必要。HunyuanVideoは未対応。",
+        help="use FlashAttention 3 for CrossAttention, requires FlashAttention 3"
+        " / CrossAttentionにFlashAttention 3を使う、FlashAttention 3が必要。",
     )
     parser.add_argument(
         "--split_attn",
@@ -309,7 +311,7 @@ def _add_optimizer_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--optimizer_type",
         type=str,
-        default="",
+        default="AdamW",
         help="Optimizer to use / オプティマイザの種類: AdamW (default), AdamW8bit, AdaFactor. "
         "Also, you can use any optimizer by specifying the full path to the class, like 'torch.optim.AdamW', 'bitsandbytes.optim.AdEMAMix8bit' or 'bitsandbytes.optim.PagedAdEMAMix8bit' etc. / ",
     )
@@ -388,12 +390,7 @@ def _add_lr_scheduler_args(parser: argparse.ArgumentParser) -> None:
 
 def _add_memory_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--fp8_base", action="store_true", help="use fp8 for base model / base modelにfp8を使う")
-    # The base NetworkTrainer reads args.fp8_scaled unguarded (trainer_base.py). Most trainers add --fp8_scaled in
-    # their own parser, but HunyuanVideo does not support it, so guarantee the attribute exists here as a safety net.
-    # Trainers that add --fp8_scaled override this default; do not remove it (it is not redundant).
     parser.set_defaults(fp8_scaled=False)
-    # parser.add_argument("--full_fp16", action="store_true", help="fp16 training including gradients / 勾配も含めてfp16で学習する")
-    # parser.add_argument("--full_bf16", action="store_true", help="bf16 training including gradients / 勾配も含めてbf16で学習する")
 
     parser.add_argument(
         "--blocks_to_swap",
@@ -422,24 +419,10 @@ def _add_memory_args(parser: argparse.ArgumentParser) -> None:
         " (one computed on, one prefetched); 1 = minimal memory but no transfer/compute overlap."
         " / (--block_swap_h2d_only用) ストリーミング用GPUリングバッファ数。2でダブルバッファ、1で最小メモリ(オーバーラップなし)。",
     )
-    parser.add_argument(
-        "--img_in_txt_in_offloading",
-        action="store_true",
-        help="offload img_in and txt_in to cpu / img_inとtxt_inをCPUにオフロードする",
-    )
-    parser.add_argument(
-        "--disable_numpy_memmap",
-        action="store_true",
-        help="Disable numpy memory mapping for model loading. Only for Wan, FramePack, Qwen-Image and FLUX.2. Increases RAM usage but speeds up model loading in some cases."
-        " / モデル読み込み時のnumpyメモリマッピングを無効にします。Wan、FramePack、Qwen-Image、FLUX.2で有効です。RAM使用量が増えますが、場合によってはモデルの読み込みが高速化されます。",
-    )
 
 
 def _add_timestep_args(parser: argparse.ArgumentParser) -> None:
     # parser.add_argument("--flow_shift", type=float, default=7.0, help="Shift factor for flow matching schedulers")
-    parser.add_argument(
-        "--guidance_scale", type=float, default=1.0, help="Embeded classifier free guidance scale (HunyuanVideo only)."
-    )
     parser.add_argument(
         "--timestep_sampling",
         choices=[
@@ -760,11 +743,11 @@ def _add_huggingface_args(parser: argparse.ArgumentParser) -> None:
 def _add_model_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--dit", type=str, help="DiT checkpoint path / DiTのチェックポイントのパス")
     parser.add_argument("--vae", type=str, help="VAE checkpoint path / VAEのチェックポイントのパス")
-    parser.add_argument("--vae_dtype", type=str, default=None, help="data type for VAE, default depends on model")
+    parser.set_defaults(vae_dtype=None)  # Internal plumbing; Krea2 preserves the VAE checkpoint dtype.
 
 
 def setup_parser_common() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(allow_abbrev=False)
     _add_general_args(parser)
     _add_attention_args(parser)
     _add_compile_and_dynamo_args(parser)
@@ -784,35 +767,98 @@ def setup_parser_common() -> argparse.ArgumentParser:
     return parser
 
 
-def read_config_from_file(args: argparse.Namespace, parser: argparse.ArgumentParser):
-    if not args.config_file:
-        return args
+def config_error(args: argparse.Namespace, key: str, message: str):
+    source = getattr(args, "_config_sources", {}).get(key, "configuration/CLI")
+    raise ValueError(f"{source}: {key}: {message}")
 
-    config_path = args.config_file + ".toml" if not args.config_file.endswith(".toml") else args.config_file
 
-    if not os.path.exists(config_path):
-        logger.info(f"{config_path} not found.")
-        exit(1)
+def _convert_config_value(action, value, source):
+    """Apply the actual argparse action's type and choices to a TOML value."""
 
-    logger.info(f"Loading settings from {config_path}...")
-    with open(config_path, "r", encoding="utf-8") as f:
-        config_dict = toml.load(f)
+    def invalid(message):
+        raise ValueError(f"{source}: {action.dest}: {message}")
 
-    # combine all sections into one
-    ignore_nesting_dict = {}
-    for section_name, section_dict in config_dict.items():
-        # if value is not dict, save key and value as is
-        if not isinstance(section_dict, dict):
-            ignore_nesting_dict[section_name] = section_dict
-            continue
+    if isinstance(action, (argparse._StoreTrueAction, argparse._StoreFalseAction)):
+        if type(value) is not bool:
+            invalid("expected a TOML boolean (true or false).")
+        return value
+    is_sequence = action.nargs in ("*", "+") or isinstance(action.nargs, int)
+    if is_sequence and not isinstance(value, list):
+        invalid("expected a TOML array.")
+    if not is_sequence and isinstance(value, (list, dict)):
+        invalid("expected a scalar value.")
+    values = value if is_sequence else [value]
+    if action.nargs == "+" and not values:
+        invalid("expected at least one value.")
+    if isinstance(action.nargs, int) and len(values) != action.nargs:
+        invalid(f"expected {action.nargs} values.")
+    converted = []
+    for item in values:
+        converter = action.type
+        if converter is int and type(item) is not int:
+            invalid("expected a TOML integer; remove quotes around numeric values.")
+        if converter is float and type(item) not in (int, float):
+            invalid("expected a TOML number; remove quotes around numeric values.")
+        if converter in (str, pathlib.Path) and not isinstance(item, str):
+            invalid("expected a TOML string.")
+        if converter is _int_or_float:
+            if type(item) not in (int, float, str):
+                invalid("expected an integer, float ratio or percentage string.")
+            if isinstance(item, str):
+                if not item.endswith("%"):
+                    invalid("use a TOML number for steps/ratio, or a percentage string such as '100%'.")
+            else:
+                # TOML int means steps and TOML float means a ratio, including 1.0.
+                converter = None
+        try:
+            item = converter(item) if converter else item
+        except (TypeError, ValueError, argparse.ArgumentTypeError) as exc:
+            invalid(f"invalid value {item!r}: {exc}; use the type shown in --help.")
+        if isinstance(item, float) and not math.isfinite(item):
+            invalid("expected a finite number.")
+        if action.choices is not None and item not in action.choices:
+            invalid(f"invalid value {item!r}; choose from {list(action.choices)}.")
+        converted.append(item)
+    return converted if is_sequence else converted[0]
 
-        # if value is dict, save all key and value into one dict
-        for key, value in section_dict.items():
-            ignore_nesting_dict[key] = value
 
-    config_args = argparse.Namespace(**ignore_nesting_dict)
-    args = parser.parse_args(namespace=config_args)
-    args.config_file = os.path.splitext(args.config_file)[0]
-    logger.info(args.config_file)
-
-    return args
+def read_config_from_file(args: argparse.Namespace, parser: argparse.ArgumentParser, argv=None):
+    """Apply defaults -> strict TOML -> explicit CLI, including CLI values equal to defaults."""
+    argv = sys.argv[1:] if argv is None else argv
+    actions = {action.dest: action for action in parser._actions if action.dest != "help"}
+    config_values = {}
+    sources = {}
+    if args.config_file:
+        config_path = os.fspath(args.config_file)
+        if not config_path.endswith(".toml"):
+            config_path += ".toml"
+        try:
+            with open(config_path, "r", encoding="utf-8") as stream:
+                config_dict = toml.load(stream)
+            for section, settings in config_dict.items():
+                entries = settings.items() if isinstance(settings, dict) else [(section, settings)]
+                for key, value in entries:
+                    source = f"{config_path} [{section}]" if isinstance(settings, dict) else config_path
+                    if key not in actions:
+                        raise ValueError(f"{source}: unknown parameter {key!r}; remove it or use a supported --help option.")
+                    if key in config_values:
+                        raise ValueError(f"{source}: duplicate parameter {key!r}, already set in {sources[key]}; keep one value.")
+                    config_values[key] = _convert_config_value(actions[key], value, source)
+                    sources[key] = source
+        except (OSError, ValueError) as exc:
+            parser.error(str(exc))
+    result = parser.parse_args(argv, namespace=argparse.Namespace(**config_values))
+    for token in argv:
+        option = token.split("=", 1)[0]
+        action = parser._option_string_actions.get(option)
+        if action is not None:
+            sources[action.dest] = f"CLI {option}"
+    result._config_sources = sources
+    for key in actions:
+        value = getattr(result, key, None)
+        values = value if isinstance(value, list) else [value]
+        if any(isinstance(item, float) and not math.isfinite(item) for item in values):
+            parser.error(f"{sources.get(key, 'default')}: {key}: expected a finite number.")
+    if result.config_file:
+        result.config_file = os.path.splitext(result.config_file)[0]
+    return result
