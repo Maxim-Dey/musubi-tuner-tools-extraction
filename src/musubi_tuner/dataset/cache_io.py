@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def save_latent_cache_krea2(item_info: ItemInfo, latent: torch.Tensor):
+def save_latent_cache_krea2(item_info: ItemInfo, latent: torch.Tensor, additional_metadata=None):
     """Krea 2 (K2) architecture. Single image (F=1), Qwen-Image VAE latents (normalized).
 
     The latent uses the *same* normalization as the Qwen-Image VAE
@@ -26,7 +26,7 @@ def save_latent_cache_krea2(item_info: ItemInfo, latent: torch.Tensor):
     dtype_str = dtype_to_str(latent.dtype)
     sd = {f"latents_{F}x{H}x{W}_{dtype_str}": latent.detach().cpu().contiguous()}
 
-    save_latent_cache_common(item_info, sd, ARCHITECTURE_KREA2_FULL)
+    save_latent_cache_common(item_info, sd, ARCHITECTURE_KREA2_FULL, additional_metadata=additional_metadata)
 
 
 def _merge_cache_metadata(required: dict[str, str], additional: Optional[dict[str, str]]) -> dict[str, str]:
@@ -67,7 +67,7 @@ def save_latent_cache_common(
     save_file(sd, item_info.latent_cache_path, metadata=metadata)
 
 
-def save_text_encoder_output_cache_krea2(item_info: ItemInfo, embed: torch.Tensor):
+def save_text_encoder_output_cache_krea2(item_info: ItemInfo, embed: torch.Tensor, additional_metadata=None):
     """Krea 2 (K2) architecture.
 
     `embed` is the per-item stack of *selected* Qwen3-VL hidden-state layers for the
@@ -83,7 +83,7 @@ def save_text_encoder_output_cache_krea2(item_info: ItemInfo, embed: torch.Tenso
     dtype_str = dtype_to_str(embed.dtype)
     sd[f"varlen_krea2_vl_embed_{dtype_str}"] = embed.detach().cpu()
 
-    save_text_encoder_output_cache_common(item_info, sd, ARCHITECTURE_KREA2_FULL)
+    save_text_encoder_output_cache_common(item_info, sd, ARCHITECTURE_KREA2_FULL, additional_metadata=additional_metadata)
 
 
 def save_text_encoder_output_cache_common(
@@ -128,7 +128,7 @@ def save_text_encoder_output_cache_common(
 
         existing_metadata.pop("caption1", None)
         existing_metadata.pop("format_version", None)
-        metadata.update(existing_metadata)  # copy existing metadata except caption and format_version
+        metadata.update({key: value for key, value in existing_metadata.items() if key not in metadata})
     else:
         text_encoder_output_dir = os.path.dirname(item_info.text_encoder_output_cache_path)
         os.makedirs(text_encoder_output_dir, exist_ok=True)

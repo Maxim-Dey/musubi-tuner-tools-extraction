@@ -16,6 +16,8 @@ import gc
 import math
 import os
 import re
+import signal
+import threading
 from typing import Optional
 
 import torch
@@ -42,6 +44,14 @@ logging.basicConfig(level=logging.INFO)
 
 
 class Krea2NetworkTrainer(NetworkTrainer):
+    def __init__(self):
+        super().__init__()
+        self._turbo_raw_state = None
+        self._turbo_cached_state = None
+        self._turbo_sampling_context = None
+        self._turbo_sampling_active = False
+        self._turbo_vae_modes = None
+
     # region model specific
 
     @property
@@ -67,6 +77,16 @@ class Krea2NetworkTrainer(NetworkTrainer):
 
     def validate_training_args(self, args):
         super().validate_training_args(args)
+        turbo_dit = getattr(args, "turbo_dit", None)
+        if getattr(args, "turbo_dit_cache", False) and not turbo_dit:
+            config_error(args, "turbo_dit_cache", "requires turbo_dit pointing to a distilled Turbo checkpoint.")
+        if turbo_dit:
+            if not os.path.isfile(turbo_dit):
+                config_error(args, "turbo_dit", f"file {turbo_dit!r} does not exist; set an existing Turbo safetensors file.")
+            if args.blocks_to_swap:
+                config_error(args, "turbo_dit", "cannot be combined with blocks_to_swap; use blocks_to_swap=0.")
+            if args.convrot_int8:
+                config_error(args, "turbo_dit", "cannot be combined with convrot_int8; disable ConvRot INT8.")
         from musubi_tuner.modules import attention
         from musubi_tuner.modules.convrot_int8_utils import HAS_TRITON
 
@@ -156,8 +176,8 @@ class Krea2NetworkTrainer(NetworkTrainer):
     ):
         """Encode the sample prompts with Qwen3-VL up front, cache the embeds, free the encoder.
 
-        Kept deliberately simple (text-to-image only): for each prompt and its optional
-        negative prompt we store the varlen selected-layer hidden stack (valid tokens only),
+        Kept deliberately simple (text-to-image only): for each prompt and its negative
+        prompt (empty by default) we store the varlen selected-layer hidden stack (valid tokens only),
         matching the training cache format, then drop the 4B encoder before training resumes.
         """
         device = accelerator.device
@@ -165,8 +185,15 @@ class Krea2NetworkTrainer(NetworkTrainer):
         assert args.text_encoder is not None, "--text_encoder is required for sample generation during training"
         logger.info(f"cache Text Encoder outputs for sample prompt: {sample_prompts}")
         prompts = load_prompts(sample_prompts)
+        for prompt in prompts:
+            # Raw CFG needs an unconditional branch even without a user-supplied negative prompt.
+            prompt.setdefault("negative_prompt", "")
+            if getattr(args, "turbo_dit", None):
+                prompt.setdefault("sample_steps", 8)
+                prompt.setdefault("cfg_scale", 1.0)
 
-        encoder = krea2_utils.load_krea2_text_encoder(args.text_encoder, dtype=torch.bfloat16, device=device)
+        tokenizer_kwargs = {"tokenizer_repo": args.tokenizer_path} if getattr(args, "tokenizer_path", None) else {}
+        encoder = krea2_utils.load_krea2_text_encoder(args.text_encoder, dtype=torch.bfloat16, device=device, **tokenizer_kwargs)
 
         logger.info("Encoding sample prompts with Qwen3-VL")
         te_outputs = {}  # prompt str -> (valid_len, num_layers, hidden) on cpu
@@ -255,7 +282,8 @@ class Krea2NetworkTrainer(NetworkTrainer):
         # mu interpolation endpoints (krea2 sample defaults minres=256, maxres=1280).
         x1 = (256 // align) ** 2
         x2 = (1280 // align) ** 2
-        ts = krea2_sampling.timesteps(img.shape[1], sample_steps, x1, x2, y1=0.5, y2=1.15)
+        schedule_args = {"mu": 1.15} if self._turbo_sampling_active else {}
+        ts = krea2_sampling.timesteps(img.shape[1], sample_steps, x1, x2, y1=0.5, y2=1.15, **schedule_args)
 
         for tcurr, tprev in tqdm(zip(ts[:-1], ts[1:]), total=len(ts) - 1, desc="Denoising steps"):
             t = torch.full((1,), tcurr, dtype=img.dtype, device=device)
@@ -393,7 +421,7 @@ class Krea2NetworkTrainer(NetworkTrainer):
         img_tokens = img_tokens.to(device=device, dtype=network_dtype)
         t = (timesteps / 1000.0).to(device=device)
 
-        if args.gradient_checkpointing:
+        if args.gradient_checkpointing and torch.is_grad_enabled():
             img_tokens.requires_grad_(True)
             context.requires_grad_(True)
 
@@ -411,8 +439,33 @@ class Krea2NetworkTrainer(NetworkTrainer):
 
     # endregion model specific
 
+    def on_before_sample_images(self, accelerator, args, epoch, steps, sample_resources, transformer, network, sample_parameters, dit_dtype):
+        if not getattr(args, "turbo_dit", None):
+            return
+        from musubi_tuner.krea2.turbo_sampling import sample_on_turbo
+
+        context = sample_on_turbo(self, args, accelerator, transformer, network)
+        context.__enter__()
+        self._turbo_sampling_context = context
+        if isinstance(sample_resources, torch.nn.Module):
+            self._turbo_vae_modes = [(module, module.training) for module in sample_resources.modules()]
+
+    def on_after_sample_images(self, accelerator, args, epoch, steps, sample_resources, transformer, network, sample_parameters, dit_dtype):
+        context, self._turbo_sampling_context = self._turbo_sampling_context, None
+        try:
+            if context is not None:
+                context.__exit__(None, None, None)
+        finally:
+            for module, mode in self._turbo_vae_modes or []:
+                module.training = mode
+            self._turbo_vae_modes = None
+
 
 def krea2_setup_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser.add_argument("--turbo_dit", type=str, default=None,
+                        help="Turbo DiT safetensors for sample images only; training and validation stay on RAW.")
+    parser.add_argument("--turbo_dit_cache", action="store_true",
+                        help="Keep frozen RAW and Turbo CPU snapshots between sample passes; otherwise retain no CPU stash.")
     parser.add_argument(
         "--fp8_scaled",
         action="store_true",
@@ -444,6 +497,10 @@ def krea2_setup_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
 
 
 def main():
+    # Python preserves an inherited SIG_IGN; foreground Ctrl+C would do nothing.
+    # Leave explicit handlers and library calls from worker threads untouched.
+    if threading.current_thread() is threading.main_thread() and signal.getsignal(signal.SIGINT) == signal.SIG_IGN:
+        signal.signal(signal.SIGINT, signal.default_int_handler)
     parser = setup_parser_common()
     parser = krea2_setup_parser(parser)
 

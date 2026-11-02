@@ -1,0 +1,1 @@
+The gray message bubble is on the left in the foreground. The "thumbs up" like symbol icon is centered on the gray message bubble. The red message bubble is on the right in the background behind the gray message bubble. Three gray dots '...' are centered at the top of the red message bubble.

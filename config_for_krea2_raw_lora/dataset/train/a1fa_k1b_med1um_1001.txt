@@ -1,0 +1,1 @@
+The traffic light section is located in the center. The green traffic light signal with a checkmark symbol '✓' made of LED dots is in the upper left corner. A coin slot with a silver coin is located on the right side of the traffic light section body. A red coin is above the silver one. Below the coin slot, a line with a code is printed.

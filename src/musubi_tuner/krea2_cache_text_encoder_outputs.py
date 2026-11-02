@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
-def encode_and_save_batch(encoder, batch: list[ItemInfo]):
+def encode_and_save_batch(encoder, batch: list[ItemInfo], provenance=None):
     prompts = [item.caption for item in batch]
     for i, item in enumerate(batch):
         print(f"Item {i}: {item.item_key}, prompt: {item.caption}")
@@ -38,7 +38,7 @@ def encode_and_save_batch(encoder, batch: list[ItemInfo]):
     for item, hidden_i, mask_i in zip(batch, hiddens, mask):
         valid = mask_i.bool()
         embed_i = hidden_i[valid]  # (valid_len, L, D)
-        save_text_encoder_output_cache_krea2(item, embed_i)
+        save_text_encoder_output_cache_krea2(item, embed_i, additional_metadata=provenance(item) if provenance else None)
 
 
 def krea2_setup_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
@@ -48,6 +48,7 @@ def krea2_setup_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
         required=True,
         help="Qwen3-VL-4B text encoder safetensors path (official or ComfyUI key layout)",
     )
+    parser.add_argument("--tokenizer_path", type=str, default=None)
     parser.add_argument("--text_encoder_dtype", type=str, default=None, help="data type for the text encoder, default is bfloat16")
     return parser
 
@@ -76,8 +77,8 @@ def validate_cache_args(args):
         raise ValueError("CLI --text_encoder_dtype: unsupported precision; use bf16, fp16 or fp32")
 
 
-def main():
-    args = setup_parser().parse_args()
+def main(args=None):
+    args = setup_parser().parse_args() if args is None else args
     validate_cache_args(args)
 
     device = args.device if args.device is not None else "cuda" if torch.cuda.is_available() else "cpu"
@@ -92,7 +93,7 @@ def main():
     # Load dataset config
     blueprint_generator = BlueprintGenerator(ConfigSanitizer())
     logger.info(f"Load dataset config from {args.dataset_config}")
-    user_config = config_utils.load_user_config(args.dataset_config)
+    user_config = config_utils.load_user_config(args.dataset_config, resolve_paths=getattr(args, "experiment_mode", False))
     blueprint = blueprint_generator.generate(user_config, args, architecture=ARCHITECTURE_KREA2)
     train_dataset_group = config_utils.generate_dataset_group_by_blueprint(blueprint.dataset_group)
 
@@ -100,28 +101,35 @@ def main():
 
     all_cache_files_for_dataset, all_cache_paths_for_dataset = cache_text_encoder_outputs.prepare_cache_files_and_paths(datasets)
 
-    encoder = krea2_utils.load_krea2_text_encoder(args.text_encoder, dtype=te_dtype, device=device)
+    encoder = krea2_utils.load_krea2_text_encoder(args.text_encoder, dtype=te_dtype, device=device, **({"tokenizer_repo": args.tokenizer_path} if getattr(args, "tokenizer_path", None) else {}))
 
     logger.info("Encoding with Qwen3-VL")
 
     def encode_for_text_encoder(batch: list[ItemInfo]):
         nonlocal encoder
-        encode_and_save_batch(encoder, batch)
+        encode_and_save_batch(encoder, batch, getattr(args, "cache_provenance", None))
 
-    cache_text_encoder_outputs.process_text_encoder_batches(
-        args.num_workers,
-        args.skip_existing,
-        args.batch_size,
-        datasets,
-        all_cache_files_for_dataset,
-        all_cache_paths_for_dataset,
-        encode_for_text_encoder,
-    )
-    del encoder
+    try:
+        cache_text_encoder_outputs.process_text_encoder_batches(
+            args.num_workers,
+            args.skip_existing,
+            args.batch_size,
+            datasets,
+            all_cache_files_for_dataset,
+            all_cache_paths_for_dataset,
+            encode_for_text_encoder,
+        )
 
-    cache_text_encoder_outputs.post_process_cache_files(
-        datasets, all_cache_files_for_dataset, all_cache_paths_for_dataset, args.keep_cache
-    )
+        cache_text_encoder_outputs.post_process_cache_files(
+            datasets, all_cache_files_for_dataset, all_cache_paths_for_dataset, args.keep_cache
+        )
+    finally:
+        del encode_for_text_encoder, encoder
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
 
 
 if __name__ == "__main__":

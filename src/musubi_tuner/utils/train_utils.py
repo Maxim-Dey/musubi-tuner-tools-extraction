@@ -151,7 +151,7 @@ def save_and_remove_state_stepwise(args: argparse.Namespace, accelerator: accele
         logger.info("uploading state to huggingface.")
         huggingface_utils.upload(args, state_dir, "/" + STEP_STATE_NAME.format(model_name, step_no))
 
-    last_n_steps = args.save_last_n_steps_state if args.save_last_n_steps_state else args.save_last_n_steps
+    last_n_steps = args.save_last_n_steps
     if last_n_steps is not None:
         # last_n_steps前のstep_noから、save_every_n_stepsの倍数のstep_noを計算して削除する
         remove_step_no = step_no - last_n_steps - 1

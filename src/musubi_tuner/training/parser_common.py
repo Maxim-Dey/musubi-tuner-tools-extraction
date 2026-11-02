@@ -632,13 +632,7 @@ def _add_save_load_args(parser: argparse.ArgumentParser) -> None:
         "--save_last_n_steps",
         type=int,
         default=None,
-        help="save checkpoints until N steps elapsed (remove older checkpoints if N steps elapsed) / 指定ステップごとにモデルを保存するとき、このステップ数経過するまで保存する（このステップ数経過したら削除する）",
-    )
-    parser.add_argument(
-        "--save_last_n_steps_state",
-        type=int,
-        default=None,
-        help="save states until N steps elapsed (remove older states if N steps elapsed, overrides --save_last_n_steps) / 指定ステップごとにstateを保存するとき、このステップ数経過するまで保存する（このステップ数経過したら削除する。--save_last_n_stepsを上書きする）",
+        help="optimizer-step retention window for checkpoints and training state; unified experiment folders are removed as a whole",
     )
     parser.add_argument(
         "--save_state",
@@ -762,6 +756,12 @@ def setup_parser_common() -> argparse.ArgumentParser:
     _add_network_args(parser)
     _add_save_load_args(parser)
     _add_metadata_args(parser)
+    parser.add_argument("--experiment_mode", action="store_true")
+    parser.add_argument("--auto_cache", action="store_true")
+    parser.add_argument("--val_dataset_config", type=str, default=None)
+    for name in ("val_every_n_steps", "val_seed_noise", "val_level_noise_n", "val_seed_noise_n"):
+        parser.add_argument("--" + name, type=int, default=None)
+    parser.add_argument("--tokenizer_path", type=str, default=None, help="Local Qwen3-VL tokenizer directory (otherwise use the locally cached official tokenizer)")
     _add_huggingface_args(parser)
     _add_model_args(parser)
     return parser
@@ -839,6 +839,11 @@ def read_config_from_file(args: argparse.Namespace, parser: argparse.ArgumentPar
                 entries = settings.items() if isinstance(settings, dict) else [(section, settings)]
                 for key, value in entries:
                     source = f"{config_path} [{section}]" if isinstance(settings, dict) else config_path
+                    if key == "save_last_n_steps_state":
+                        raise ValueError(
+                            f"{source}: save_last_n_steps_state was removed; use save_last_n_steps "
+                            "for checkpoint and training-state retention."
+                        )
                     if key not in actions:
                         raise ValueError(f"{source}: unknown parameter {key!r}; remove it or use a supported --help option.")
                     if key in config_values:
@@ -859,6 +864,45 @@ def read_config_from_file(args: argparse.Namespace, parser: argparse.ArgumentPar
         values = value if isinstance(value, list) else [value]
         if any(isinstance(item, float) and not math.isfinite(item) for item in values):
             parser.error(f"{sources.get(key, 'default')}: {key}: expected a finite number.")
+    validate_validation_options(result)
+    if getattr(result, "experiment_mode", False):
+        base = pathlib.Path(config_path).resolve().parent if args.config_file else pathlib.Path.cwd()
+        for key in EXPERIMENT_LOCAL_PATHS:
+            value = getattr(result, key, None)
+            if value and not (key == "resume" and getattr(result, "resume_from_huggingface", False)):
+                def resolve(item):
+                    if "://" in str(item) or pathlib.Path(item).is_absolute():
+                        return item
+                    return str(base / item)
+                setattr(result, key, [resolve(item) for item in value] if isinstance(value, list) else resolve(value))
     if result.config_file:
+        result._config_path = str(pathlib.Path(config_path).resolve())
         result.config_file = os.path.splitext(result.config_file)[0]
     return result
+
+
+EXPERIMENT_LOCAL_PATHS = (
+    "dit", "turbo_dit", "vae", "text_encoder", "tokenizer_path", "dataset_config", "val_dataset_config",
+    "sample_prompts", "output_dir", "logging_dir", "resume", "network_weights", "base_weights",
+    "log_tracker_config", "dynamo_cache_dir",
+)
+
+
+def validate_validation_options(args):
+    names = ("val_dataset_config", "val_every_n_steps", "val_seed_noise", "val_level_noise_n", "val_seed_noise_n")
+    supplied = set(getattr(args, "_config_sources", {}))
+    present = {name for name in names if name in supplied or getattr(args, name, None) is not None}
+    if present and present != set(names):
+        config_error(args, "val_dataset_config", "incomplete validation group; explicitly set " + ", ".join(names))
+    if not present:
+        return
+    if not isinstance(args.val_dataset_config, str) or not args.val_dataset_config:
+        config_error(args, "val_dataset_config", "set a nonempty validation dataset path")
+    for name in names[1:]:
+        value = getattr(args, name)
+        if type(value) is not int:
+            config_error(args, name, "expected an integer (booleans are invalid)")
+        if name in ("val_every_n_steps", "val_seed_noise_n") and value < 1:
+            config_error(args, name, "must be >=1")
+        if name == "val_level_noise_n" and (value < 2 or value % 2):
+            config_error(args, name, "must be an even integer >=2")

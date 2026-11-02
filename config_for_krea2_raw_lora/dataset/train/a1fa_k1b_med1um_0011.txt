@@ -1,0 +1,1 @@
+A round labyrinth with partitions inside is located in the center. A red ball lies on the left inside the labyrinth. A red ball lies at the top inside the labyrinth. A round disk is located at the bottom beneath the labyrinth. A digital code is printed on the side of the labyrinth.

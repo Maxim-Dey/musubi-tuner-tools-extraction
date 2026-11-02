@@ -1,0 +1,1 @@
+A screen with two metallic handles is located in the center of the frame. The screen displays a dot pattern in the shape of a map. Two red geolocation markers hover above the screen: a large marker is on the left, a small marker is on the right. The text '1.01_*' is displayed in the upper right corner of the screen.

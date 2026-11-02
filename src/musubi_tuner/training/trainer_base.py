@@ -4,6 +4,7 @@ import ast
 import asyncio
 import importlib
 import inspect
+import itertools
 import argparse
 import math
 import os
@@ -50,6 +51,10 @@ from musubi_tuner.training.accelerator_setup import (
 )
 from musubi_tuner.training.sampling_prompts import should_sample_images, save_images_grid
 from musubi_tuner.training.parser_common import config_error
+from musubi_tuner.training.krea2_validation import run_validation
+from musubi_tuner.training.krea2_experiment_state import (
+    ExperimentState, checkpoint_name, save_checkpoint, training_topology, restore_data_iterator, choose_tensorboard_directory,
+)
 from musubi_tuner.training.timesteps import (
     compute_density_for_timestep_sampling,
     compute_ideogram4_shift_timestep,
@@ -127,6 +132,10 @@ class DiTOutput:
 class NetworkTrainer:
     def __init__(self):
         self.blocks_to_swap = None
+        self._validation_inputs = None
+        self._unified_checkpoint = False
+        self._experiment_state = ExperimentState()
+        self._epoch_generator_state = None
         self.timestep_range_pool = []
         self.num_timestep_buckets: Optional[int] = None  # for get_bucketed_timestep()
 
@@ -893,7 +902,7 @@ class NetworkTrainer:
         transformer.switch_block_swap_for_inference()
 
         # Create a directory to save the samples
-        save_dir = os.path.join(args.output_dir, "sample")
+        save_dir = getattr(self, "_sample_save_dir", None) or os.path.join(args.output_dir, "sample")
         os.makedirs(save_dir, exist_ok=True)
 
         # save random state to restore later
@@ -1386,8 +1395,23 @@ class NetworkTrainer:
             return
 
         session_id, training_started_at = self._init_session(args)
-        train_dataset_group, collator, current_epoch = self._build_dataset(args)
-        accelerator, weight_dtype, dit_dtype, dit_weight_dtype, vae_dtype = self._prepare_accelerator_and_dtypes(args)
+        if self._validation_inputs is not None:
+            from musubi_tuner.training.krea2_validation_inputs import prepare_validation_caches
+
+            choose_tensorboard_directory(args, self._experiment_state)
+            accelerator, weight_dtype, dit_dtype, dit_weight_dtype, vae_dtype = self._prepare_accelerator_and_dtypes(args)
+            prepare_validation_caches(args, self._validation_inputs, accelerator)
+            train_dataset_group, collator, current_epoch = self._build_dataset(args)
+            if args.resume:
+                topology = training_topology(args, accelerator, train_dataset_group)
+                for key, value in topology.items():
+                    if key == "max_train_steps" and args.max_train_epochs is not None:
+                        continue
+                    if self._experiment_state.topology.get(key) != value:
+                        raise ValueError(f"Exact resume configuration changed: {key}; restore the checkpoint training settings")
+        else:
+            train_dataset_group, collator, current_epoch = self._build_dataset(args)
+            accelerator, weight_dtype, dit_dtype, dit_weight_dtype, vae_dtype = self._prepare_accelerator_and_dtypes(args)
         sample_parameters, sample_resources = self.prepare_sampling(args, accelerator, vae_dtype)
         transformer = self._load_dit_and_swap(args, accelerator, dit_weight_dtype)
         # the network factories take a LyCORIS-compatible vae argument; the sampling
@@ -1477,7 +1501,6 @@ class NetworkTrainer:
             "scale_weight_norms",
             "save_last_n_steps",
             "save_last_n_epochs",
-            "save_last_n_steps_state",
             "save_last_n_epochs_state",
         ):
             value = getattr(args, key)
@@ -1724,6 +1747,25 @@ class NetworkTrainer:
         """
         self.validate_training_args(args)
 
+        from musubi_tuner.training.krea2_validation_inputs import preflight_validation_inputs
+
+        self._validation_inputs = preflight_validation_inputs(args)
+        self._unified_checkpoint = bool(getattr(args, "experiment_mode", False) and args.save_state)
+        self._experiment_state = ExperimentState()
+        self._epoch_generator_state = None
+        if self._validation_inputs is not None:
+            if self._unified_checkpoint and args.save_precision not in (None, "fp32", "float"):
+                config_error(args, "save_precision", "experiment_mode with save_state requires fp32")
+            if args.resume:
+                if self._unified_checkpoint:
+                    self._experiment_state = ExperimentState.load(args.resume)
+                else:
+                    state_file = os.path.join(args.resume, "experiment_state.json")
+                    if not os.path.isfile(state_file):
+                        config_error(args, "resume", "missing exact training position; resume from a new-mode checkpoint")
+                    with open(state_file, encoding="utf-8") as stream:
+                        self._experiment_state = ExperimentState(**json.load(stream))
+
         if torch.cuda.is_available():
             if args.cuda_allow_tf32:
                 torch.backends.cuda.matmul.allow_tf32 = True
@@ -1751,6 +1793,8 @@ class NetworkTrainer:
         if args.seed is None:
             args.seed = random.randint(0, 2**32)
         set_seed(args.seed)
+        if self._validation_inputs is not None:
+            self._data_generator = torch.Generator().manual_seed(args.seed)
         return session_id, training_started_at
 
     def _build_dataset(self, args):
@@ -1763,7 +1807,7 @@ class NetworkTrainer:
 
         blueprint_generator = BlueprintGenerator(ConfigSanitizer())
         logger.info(f"Load dataset config from {args.dataset_config}")
-        user_config = config_utils.load_user_config(args.dataset_config)
+        user_config = config_utils.load_user_config(args.dataset_config, resolve_paths=getattr(args, "experiment_mode", False))
         blueprint = blueprint_generator.generate(user_config, args, architecture=self.architecture)
         train_dataset_group = config_utils.generate_dataset_group_by_blueprint(
             blueprint.dataset_group,
@@ -1931,6 +1975,7 @@ class NetworkTrainer:
             collate_fn=collator,
             num_workers=n_workers,
             persistent_workers=args.persistent_data_loader_workers,
+            **({"generator": self._data_generator} if self._validation_inputs is not None else {}),
         )
 
         # calculate max_train_steps
@@ -2009,6 +2054,20 @@ class NetworkTrainer:
     def _register_hooks_and_resume(self, args, accelerator, network):
         # before resuming make hook for saving/loading to save/load the network weights only
         def save_model_hook(models, weights, output_dir):
+            if self._validation_inputs is not None and not self._unified_checkpoint:
+                if accelerator.is_main_process:
+                    self._experiment_state.save(output_dir)
+                    with open(os.path.join(output_dir, "val_manifest.json"), "w", encoding="utf-8") as stream:
+                        json.dump(self._validation_inputs.manifest, stream, indent=2)
+                torch.save(self._epoch_generator_state, os.path.join(output_dir, f"data_position_{accelerator.process_index}.pt"))
+            if self._unified_checkpoint:
+                if accelerator.is_main_process:
+                    accelerator.unwrap_model(network).save_weights(
+                        os.path.join(output_dir, "model.safetensors"), torch.float32,
+                        getattr(self, "_checkpoint_metadata", self.extra_metadata(args)),
+                    )
+                weights.clear()
+                return
             # pop weights of other models than network to save only network weights
             # only main process or deepspeed https://github.com/huggingface/diffusers/issues/2606
             if accelerator.is_main_process:  # or args.deepspeed:
@@ -2022,6 +2081,10 @@ class NetworkTrainer:
                 # print(f"save model hook: {len(weights)} weights will be saved")
 
         def load_model_hook(models, input_dir):
+            if self._unified_checkpoint:
+                accelerator.unwrap_model(network).load_weights(os.path.join(input_dir, "model.safetensors"))
+                models.clear()
+                return
             # remove models except network
             remove_indices = []
             for i, model in enumerate(models):
@@ -2036,6 +2099,10 @@ class NetworkTrainer:
 
         # resume from local or huggingface. accelerator.step is set
         self.resume_from_local_or_hf_if_specified(accelerator, args)  # accelerator.load_state(args.resume)
+        if self._validation_inputs is not None and args.resume:
+            self._epoch_generator_state = torch.load(
+                os.path.join(args.resume, f"data_position_{accelerator.process_index}.pt"), map_location="cpu", weights_only=True
+            )
 
     def _run_training_loop(
         self,
@@ -2196,6 +2263,14 @@ class NetworkTrainer:
         noise_scheduler = FlowMatchDiscreteScheduler(shift=args.discrete_flow_shift, reverse=True, solver="euler")
 
         loss_recorder = train_utils.LossRecorder()
+        if self._validation_inputs is not None:
+            topology = training_topology(args, accelerator, train_dataset_group)
+            if args.resume and self._experiment_state.topology != topology:
+                raise ValueError("Exact resume training topology/configuration differs from checkpoint; use the saved batch/seed/accumulation/target")
+            self._experiment_state.topology = topology
+            epoch_to_start = self._experiment_state.epoch
+            global_step = self._experiment_state.completed_optimizer_steps
+            progress_bar.update(global_step)
         del train_dataset_group
 
         # function for saving/removing
@@ -2257,29 +2332,76 @@ class NetworkTrainer:
                 accelerator.print(f"removing old checkpoint: {old_ckpt_file}")
                 os.remove(old_ckpt_file)
 
+        sampled_steps = set()
+        if self._unified_checkpoint and args.resume and os.path.isdir(os.path.join(args.resume, "samples")):
+            sampled_steps.add(global_step)
+
         def _do_sample(epoch_arg, steps_arg):
             if not should_sample_images(args, steps_arg, epoch_arg):
                 return
-            self.on_before_sample_images(
-                accelerator, args, epoch_arg, steps_arg, sample_resources, transformer, network, sample_parameters, dit_dtype
-            )
+            if self._unified_checkpoint and steps_arg in sampled_steps:
+                return
+            if self._unified_checkpoint:
+                self._sample_save_dir = os.path.join(args.output_dir, "samples", f"step{steps_arg:06d}")
             try:
+                self.on_before_sample_images(
+                    accelerator, args, epoch_arg, steps_arg, sample_resources, transformer, network, sample_parameters, dit_dtype
+                )
                 self.sample_images(
                     accelerator, args, epoch_arg, steps_arg, sample_resources, transformer, sample_parameters, dit_dtype
                 )
+                sampled_steps.add(steps_arg)
             finally:
-                self.on_after_sample_images(
-                    accelerator, args, epoch_arg, steps_arg, sample_resources, transformer, network, sample_parameters, dit_dtype
-                )
+                try:
+                    self.on_after_sample_images(
+                        accelerator, args, epoch_arg, steps_arg, sample_resources, transformer, network, sample_parameters, dit_dtype
+                    )
+                finally:
+                    self._sample_save_dir = None
+
+        def _do_validation(*, initial=False, final=False):
+            if not getattr(args, "val_dataset_config", None):
+                return
+            state = self._experiment_state
+            if not state.validation_due(args.val_every_n_steps, initial=initial, final=final):
+                return
+            metrics = run_validation(
+                self, args, accelerator, transformer, network, self._validation_inputs, network_dtype
+            )
+            state.last_validation_step = global_step
+            state.validation_metrics = metrics
+            if accelerator.is_main_process:
+                accelerator.log(metrics, step=global_step)
+
+        saved_unified_steps = set()
+        if args.resume:
+            expected_dir = os.path.join(args.output_dir, checkpoint_name(args.output_name, global_step))
+            if os.path.abspath(args.resume) == os.path.abspath(expected_dir):
+                saved_unified_steps.add(global_step)
+
+        def _save_unified():
+            if global_step in saved_unified_steps:
+                return
+            self._checkpoint_metadata = {
+                **metadata, "ss_steps": str(global_step), "ss_epoch": str(self._experiment_state.epoch + 1),
+                "ss_training_finished_at": str(time.time()),
+            }
+            result = save_checkpoint(
+                args, accelerator, self._experiment_state, self._validation_inputs.manifest, self._epoch_generator_state
+            )
+            saved_unified_steps.add(global_step)
+            return result
+
+        _do_validation(initial=True)
 
         # For --sample_at_first
-        if should_sample_images(args, global_step, epoch=0):
+        if should_sample_images(args, global_step, epoch=0) and not (self._validation_inputs is not None and args.resume):
             optimizer_eval_fn()
             _do_sample(0, global_step)
             optimizer_train_fn()
         if len(accelerator.trackers) > 0:
             # log empty object to commit the sample images to wandb
-            accelerator.log({}, step=0)
+            accelerator.log({}, step=global_step)
 
         # training loop
 
@@ -2294,7 +2416,10 @@ class NetworkTrainer:
 
         optimizer_train_fn()  # Set training mode
 
-        for epoch in range(epoch_to_start, num_train_epochs):
+        epochs = itertools.count(epoch_to_start) if self._validation_inputs is not None else range(epoch_to_start, num_train_epochs)
+        for epoch in epochs:
+            if global_step >= args.max_train_steps:
+                break
             accelerator.print(f"\nepoch {epoch + 1}/{num_train_epochs}")
             current_epoch.value = epoch + 1
 
@@ -2302,7 +2427,26 @@ class NetworkTrainer:
 
             accelerator.unwrap_model(network).on_epoch_start(transformer)
 
-            for step, batch in enumerate(train_dataloader):
+            start_microbatch = 0
+            if self._validation_inputs is not None:
+                state = self._experiment_state
+                start_microbatch = state.next_microbatch if epoch == state.epoch else 0
+                if hasattr(train_dataloader, "set_epoch"):
+                    train_dataloader.set_epoch(epoch)
+                if start_microbatch and self._epoch_generator_state is not None:
+                    batches = restore_data_iterator(
+                        train_dataloader, start_microbatch, self._data_generator, self._epoch_generator_state
+                    )
+                else:
+                    self._epoch_generator_state = self._data_generator.get_state().clone()
+                    batches = iter(train_dataloader)
+                state.epoch = epoch
+            else:
+                batches = train_dataloader
+
+            epoch_had_microbatches = False
+            for step, batch in enumerate(batches, start=start_microbatch):
+                epoch_had_microbatches = True
                 # torch.compiler.cudagraph_mark_step_begin() # for cudagraphs
 
                 latents = batch["latents"]
@@ -2362,11 +2506,20 @@ class NetworkTrainer:
                     keys_scaled, mean_norm, maximum_norm = None, None, None
 
                 # Checks if the accelerator has performed an optimization step behind the scenes
-                if accelerator.sync_gradients:
+                completed_update = accelerator.sync_gradients and (
+                    self._validation_inputs is None or not accelerator.optimizer_step_was_skipped
+                )
+                if self._validation_inputs is not None:
+                    self._experiment_state.epoch = epoch
+                    self._experiment_state.next_microbatch = step + 1
+                if completed_update:
                     if global_step == 0:
                         progress_bar.reset()  # exclude first step from progress bar, because it may take long due to initializations
                     progress_bar.update(1)
                     global_step += 1
+                    if self._validation_inputs is not None:
+                        self._experiment_state.completed_optimizer_steps = global_step
+                    _do_validation(final=global_step >= args.max_train_steps)
 
                     # to avoid calling optimizer_eval_fn() too frequently, we call it only when we need to sample images or save the model
                     should_sampling = should_sample_images(args, global_step, epoch=None)
@@ -2379,7 +2532,9 @@ class NetworkTrainer:
 
                         if should_saving:
                             accelerator.wait_for_everyone()
-                            if accelerator.is_main_process:
+                            if self._unified_checkpoint:
+                                _save_unified()
+                            elif accelerator.is_main_process:
                                 ckpt_name = train_utils.get_step_ckpt_name(args.output_name, global_step)
                                 save_model(ckpt_name, accelerator.unwrap_model(network), global_step, epoch)
 
@@ -2401,7 +2556,7 @@ class NetworkTrainer:
                 if args.scale_weight_norms:
                     progress_bar.set_postfix(**{**max_mean_logs, **logs})
 
-                if len(accelerator.trackers) > 0:
+                if len(accelerator.trackers) > 0 and (self._validation_inputs is None or completed_update):
                     logs = self.generate_step_logs(
                         args, current_loss, avr_loss, lr_scheduler, lr_descriptions, optimizer, keys_scaled, mean_norm, maximum_norm
                     )
@@ -2414,16 +2569,19 @@ class NetworkTrainer:
                     break
 
             self.on_epoch_end(args, accelerator, network, transformer, epoch + 1)
+            if self._validation_inputs is not None and self._experiment_state.next_microbatch >= len(train_dataloader):
+                self._experiment_state.epoch = epoch + 1
+                self._experiment_state.next_microbatch = 0
 
-            if len(accelerator.trackers) > 0:
+            if len(accelerator.trackers) > 0 and epoch_had_microbatches:
                 logs = {"loss/epoch": loss_recorder.moving_average}
-                accelerator.log(logs, step=epoch + 1)
+                accelerator.log(logs, step=global_step if self._validation_inputs is not None else epoch + 1)
 
             accelerator.wait_for_everyone()
 
             # save model at the end of epoch if needed
             optimizer_eval_fn()
-            if args.save_every_n_epochs is not None:
+            if args.save_every_n_epochs is not None and not self._unified_checkpoint:
                 saving = (epoch + 1) % args.save_every_n_epochs == 0 and (epoch + 1) < num_train_epochs
                 if is_main_process and saving:
                     ckpt_name = train_utils.get_epoch_ckpt_name(args.output_name, epoch + 1)
@@ -2448,13 +2606,17 @@ class NetworkTrainer:
         if is_main_process:
             network = accelerator.unwrap_model(network)
 
+        _do_validation(final=True)
+        if self._unified_checkpoint:
+            optimizer_eval_fn()
+            _save_unified()
         accelerator.end_training()
         optimizer_eval_fn()
 
-        if is_main_process and (args.save_state or args.save_state_on_train_end):
+        if not self._unified_checkpoint and is_main_process and (args.save_state or args.save_state_on_train_end):
             train_utils.save_state_on_train_end(args, accelerator)
 
-        if is_main_process:
+        if is_main_process and not self._unified_checkpoint:
             ckpt_name = train_utils.get_last_ckpt_name(args.output_name)
             save_model(ckpt_name, network, global_step, num_train_epochs, force_sync_upload=True)
 

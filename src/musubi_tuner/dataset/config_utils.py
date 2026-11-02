@@ -162,7 +162,7 @@ def generate_dataset_group_by_blueprint(dataset_group_blueprint, training=False,
     return DatasetGroup(datasets)
 
 
-def load_user_config(file):
+def load_user_config(file, resolve_paths=False):
     path = Path(file)
     if not path.is_file():
         raise ValueError(f"Dataset config {path}: file not found; set an existing dataset config path")
@@ -174,6 +174,12 @@ def load_user_config(file):
                 config = toml.load(stream)
             else:
                 raise ValueError("unsupported format; use .toml or .json")
-        return ConfigSanitizer().sanitize_user_config(config)
+        config = ConfigSanitizer().sanitize_user_config(config)
+        if resolve_paths:
+            for dataset in config["datasets"]:
+                for key in ("image_directory", "image_jsonl_file", "cache_directory"):
+                    if dataset.get(key) and not Path(dataset[key]).is_absolute():
+                        dataset[key] = str(path.resolve().parent / dataset[key])
+        return config
     except ValueError as error:
         raise ValueError(f"Dataset config {path}: {error}; correct the indicated field or file syntax") from error

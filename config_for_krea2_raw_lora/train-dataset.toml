@@ -1,0 +1,12 @@
+# Experiment-mode paths resolve from this dataset TOML.
+[general]
+resolution = [1024, 1024]
+caption_extension = ".txt"
+batch_size = 8
+num_repeats = 1
+enable_bucket = true
+bucket_no_upscale = false
+
+[[datasets]]
+image_directory = "dataset/train"
+cache_directory = "cache/train"

@@ -13,6 +13,7 @@ from torch import nn
 import toml
 
 from musubi_tuner.krea2_train_network import Krea2NetworkTrainer, krea2_setup_parser
+from musubi_tuner.krea2 import krea2_utils
 from musubi_tuner.networks import lora_krea2
 from musubi_tuner.training.parser_common import read_config_from_file, setup_parser_common
 from musubi_tuner.training.sampling_prompts import load_prompts
@@ -70,6 +71,27 @@ def test_effective_config_cli_overrides_toml_even_when_equal_to_defaults(tmp_pat
     assert args._config_sources["learning_rate"] == "CLI --learning_rate"
 
 
+def test_removed_state_retention_key_rejected_with_migration_message(tmp_path, capsys):
+    with pytest.raises(SystemExit) as error:
+        _from_toml(tmp_path, "save_last_n_steps_state=1000\nsave_last_n_steps=1000\n")
+    assert error.value.code == 2
+    message = capsys.readouterr().err
+    assert "save_last_n_steps_state was removed" in message
+    assert "use save_last_n_steps" in message
+
+
+def test_only_single_step_retention_option_is_public_and_old_cli_is_rejected(capsys):
+    parser = _parser()
+    assert "--save_last_n_steps_state" not in parser.format_help()
+    args = parser.parse_args(["--save_last_n_steps", "1000"])
+    assert args.save_last_n_steps == 1000
+    assert not hasattr(args, "save_last_n_steps_state")
+    with pytest.raises(SystemExit) as error:
+        parser.parse_args(["--save_last_n_steps_state", "1000"])
+    assert error.value.code == 2
+    assert "unrecognized arguments: --save_last_n_steps_state 1000" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("value, expected_type, expected", [("1.0", float, 1.0), ("1", int, 1), ('"100%"', float, 1.0)])
 def test_toml_warmup_preserves_step_count_vs_ratio_semantics(tmp_path, value, expected_type, expected):
     args = _from_toml(tmp_path, f'lr_warmup_steps={value}\nlr_scheduler="linear"\nmax_train_steps=100')
@@ -108,7 +130,7 @@ def test_disabled_timestep_buckets_full_warmup_and_zero_retention_remain_valid(t
     "contents, key",
     [
         ("unknown_option=1", "unknown_option"),
-        ('turbo_dit="turbo.safetensors"', "turbo_dit"),
+        ('turbo_dit=42', "turbo_dit"),
         ('vae_dtype="bf16"', "vae_dtype"),
         ('mixed_precision="invalid"', "mixed_precision"),
         ('max_train_steps="100"', "max_train_steps"),
@@ -377,13 +399,18 @@ def test_starter_train_and_sample_files_use_the_actual_parsers():
     parser = _parser()
     argv = ["--config_file", str(config)]
     args = read_config_from_file(parser.parse_args(argv), parser, argv)
-    assert args.network_module == "networks.lora_krea2" and args.optimizer_type == "AdamW"
-    assert args.lr_scheduler == "constant" and args.lr_warmup_steps == 0
+    assert args.network_module == "networks.lora_krea2" and args.optimizer_type == "AdamW8bit"
+    assert args.lr_scheduler == "constant_with_warmup" and args.lr_warmup_steps == 100
     assert args.mixed_precision == "bf16" and args.sdpa
-    assert args.save_state and args.save_state_on_train_end
+    assert args.save_state and not args.save_state_on_train_end
+    assert args.save_last_n_steps == 1000 and not hasattr(args, "save_last_n_steps_state")
     assert (root / args.dataset_config).is_file()
     prompts = load_prompts(root / args.sample_prompts)
-    assert prompts[0]["negative_prompt"] and prompts[0]["cfg_scale"] > 1
+    assert all("negative_prompt" not in prompt for prompt in prompts)
+    if args.turbo_dit:
+        assert all(prompt["cfg_scale"] == 1 and prompt["sample_steps"] == 8 for prompt in prompts)
+    else:
+        assert all(prompt["cfg_scale"] > 1 for prompt in prompts)
 
 
 @pytest.mark.parametrize(
@@ -434,6 +461,71 @@ def test_image_prompt_formats_preserve_sample_values(tmp_path, format, content):
         "seed": 42,
         "enum": 0,
     }
+
+
+@pytest.mark.parametrize("cfg_scale", [None, 1.0, 4.0])
+@pytest.mark.parametrize("negative_prompt", [None, "blurred"])
+def test_krea_sampling_uses_empty_or_explicit_negative_with_cfg(tmp_path, monkeypatch, cfg_scale, negative_prompt):
+    prompt_file = tmp_path / "prompts.txt"
+    line = "subject --w 16 --h 16 --s 1 --d 42"
+    if cfg_scale is not None:
+        line += f" --l {cfg_scale}"
+    if negative_prompt is not None:
+        line += f" --n {negative_prompt}"
+    prompt_file.write_text(f"{line}\n{line}\n", encoding="utf-8")
+    encoded = []
+
+    def encode(encoder, prompts):
+        text = prompts[0]
+        encoded.append(text)
+        # Distinct nonzero embeddings prove the empty string is encoded, not replaced by zeros.
+        value = {"subject": 2.0, "": 1.0, "blurred": 3.0}[text]
+        return torch.full((1, 2, 2, 4), value), torch.ones(1, 2, dtype=torch.bool)
+
+    monkeypatch.setattr(krea2_utils, "load_krea2_text_encoder", lambda *args, **kwargs: object())
+    monkeypatch.setattr(krea2_utils, "get_krea2_prompt_embeds", encode)
+    args = _args(tmp_path)
+    args.text_encoder = "unused.safetensors"
+    accelerator = Accelerator(cpu=True, mixed_precision="no")
+    trainer = Krea2NetworkTrainer()
+    prompts = trainer.process_sample_prompts(args, accelerator, str(prompt_file))
+    negative_text = negative_prompt if negative_prompt is not None else ""
+    assert encoded == ["subject", negative_text]  # Shared conditioning is encoded only once.
+    assert all(prompt["negative_prompt"] == negative_text for prompt in prompts)
+
+    class Model(nn.Module):
+        config = SimpleNamespace(patch=2, channels=1)
+
+        def __init__(self):
+            super().__init__()
+            self.branches = []
+
+        def forward(self, img, context, **kwargs):
+            value = context.mean().item()
+            self.branches.append(value)
+            return torch.full_like(img, value)
+
+    class Vae(nn.Module):
+        dtype = torch.bfloat16
+
+        def decode_to_pixels(self, latent):
+            self.latent = latent.clone()
+            return torch.full((1, 3, 16, 16), 0.5)
+
+    model, vae = Model(), Vae()
+    trainer.sample_image_inference(
+        accelerator, args, model, torch.bfloat16, vae, str(tmp_path), prompts[0], None, 1
+    )
+    effective_cfg = cfg_scale if cfg_scale is not None else 5.5
+    negative_value = 3.0 if negative_prompt is not None else 1.0
+    velocity = negative_value + effective_cfg * (2.0 - negative_value) if effective_cfg > 1 else 2.0
+    assert model.branches == ([2.0, negative_value] if effective_cfg > 1 else [2.0])
+    noise = torch.randn(1, 1, 2, 2, dtype=torch.bfloat16, generator=torch.Generator().manual_seed(42))
+    assert torch.equal(vae.latent, (noise - velocity).unsqueeze(2))
+    images = list(tmp_path.glob("adapter_000001_00_*_42_000.png"))
+    assert len(images) == 1
+    with Image.open(images[0]) as image:
+        assert image.size == (16, 16)
 
 
 class _SampleModel(nn.Module):

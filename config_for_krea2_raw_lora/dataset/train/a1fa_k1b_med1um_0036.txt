@@ -1,0 +1,1 @@
+The metal container is in the center. The screen with numerical data is in the lower right corner on the container. The red round chip is in the upper left corner on the container. The black round chip is at the bottom below the red chip. A coordinate grid is depicted on the red chip.

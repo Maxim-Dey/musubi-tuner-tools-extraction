@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
-def encode_and_save_batch(vae: qwen_image_autoencoder_kl.AutoencoderKLQwenImage, batch: List[ItemInfo]):
+def encode_and_save_batch(vae: qwen_image_autoencoder_kl.AutoencoderKLQwenImage, batch: List[ItemInfo], provenance=None):
     # Stack batch into (B, C, 1, H, W) in RGB order, normalized to [-1, 1].
     contents = []
     for item in batch:
@@ -39,7 +39,7 @@ def encode_and_save_batch(vae: qwen_image_autoencoder_kl.AutoencoderKLQwenImage,
     for b, item in enumerate(batch):
         target_latent = latents[b]  # (C, 1, H, W)
         print(f"Saving cache for item {item.item_key} at {item.latent_cache_path}, latents shape: {target_latent.shape}")
-        save_latent_cache_krea2(item_info=item, latent=target_latent)
+        save_latent_cache_krea2(item_info=item, latent=target_latent, additional_metadata=provenance(item) if provenance else None)
 
 
 def setup_parser():
@@ -54,8 +54,8 @@ def validate_cache_args(args):
         raise ValueError(f"CLI --vae: file '{args.vae}' does not exist; set an existing local Qwen-Image VAE safetensors file")
 
 
-def main():
-    args = setup_parser().parse_args()
+def main(args=None):
+    args = setup_parser().parse_args() if args is None else args
     validate_cache_args(args)
 
     device = args.device if hasattr(args, "device") and args.device else ("cuda" if torch.cuda.is_available() else "cpu")
@@ -64,7 +64,7 @@ def main():
     # Load dataset config
     blueprint_generator = BlueprintGenerator(ConfigSanitizer())
     logger.info(f"Load dataset config from {args.dataset_config}")
-    user_config = config_utils.load_user_config(args.dataset_config)
+    user_config = config_utils.load_user_config(args.dataset_config, resolve_paths=getattr(args, "experiment_mode", False))
     blueprint = blueprint_generator.generate(user_config, args, architecture=ARCHITECTURE_KREA2)
     train_dataset_group = config_utils.generate_dataset_group_by_blueprint(blueprint.dataset_group)
 
@@ -79,9 +79,17 @@ def main():
     vae.to(device)
 
     def encode(batch: List[ItemInfo]):
-        encode_and_save_batch(vae, batch)
+        nonlocal vae
+        encode_and_save_batch(vae, batch, getattr(args, "cache_provenance", None))
 
-    cache_latents.encode_datasets(datasets, encode, args)
+    try:
+        cache_latents.encode_datasets(datasets, encode, args)
+    finally:
+        del encode, vae
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 if __name__ == "__main__":

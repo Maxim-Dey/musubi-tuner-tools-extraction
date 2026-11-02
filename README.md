@@ -1,6 +1,6 @@
 # Musubi Tuner: Krea2 Raw LoRA
 
-This extraction supports captioned-image LoRA training for **Krea 2 Raw**: latent and text caching, training, Raw sample images during training, logging, adapter/state saving and resume. It retains the Qwen-Image VAE and Qwen3-VL-4B conditioner required by this workflow.
+This extraction supports captioned-image LoRA training for **Krea 2 Raw**: latent and text caching, training, Raw or opt-in Turbo sample images during training, logging, adapter/state saving and resume. It retains the Qwen-Image VAE and Qwen3-VL-4B conditioner required by this workflow.
 
 ## Environment and model files
 
@@ -30,46 +30,60 @@ export PYTHONPATH="$PWD/src"
 
 Place an image and its UTF-8 caption together, such as `photo01.png` and `photo01.txt`. Each caption describes its corresponding training image. Image JSONL sources are also supported; see [dataset configuration](docs/dataset_config.md).
 
-Edit the starter files:
+The supplied experiment uses all 107 training and 20 independent validation images, with paired UTF-8 captions. Preserve this split and the ten existing sample subjects.
 
-- [dataset.toml](config_for_krea2_raw_lora/dataset.toml): replace `REPLACE_WITH_IMAGE_DIRECTORY`.
-- [train.toml](config_for_krea2_raw_lora/train.toml): replace the Raw DiT, VAE and text-encoder paths.
-- [sample_prompts.txt](config_for_krea2_raw_lora/sample_prompts.txt): replace `REPLACE_WITH_TRAINING_CAPTION`.
+- [train.toml](config_for_krea2_raw_lora/train.toml): main 1000-step experiment; verified `dit`, `vae` and `text_encoder` paths are filled during remote preparation. Until then required model paths are unset and the configuration is not ready for training.
+- [train-dataset.toml](config_for_krea2_raw_lora/train-dataset.toml): 1024 buckets, train batch 16, one repeat and `cache/train`.
+- [val-dataset.toml](config_for_krea2_raw_lora/val-dataset.toml): same preprocessing, batch 1, one repeat and `cache/val`.
+- [sample_prompts.txt](config_for_krea2_raw_lora/sample_prompts.txt): ten user subjects, 1024×1024, seed 42, 8 Turbo sampling steps and CFG 1.
 
-Use the same VAE and text-encoder files in caching and training. Paths in these examples resolve from the repository root. The starter uses 1024 image buckets, rank/alpha 32, batch size 1 and 1000 steps; these are editable example choices.
+With `experiment_mode=true`, paths in the main TOML resolve from its directory; paths inside each dataset TOML resolve from that dataset file. Absolute paths remain absolute. The legacy [dataset.toml](config_for_krea2_raw_lora/dataset.toml) remains an example for ordinary mode, whose paths retain their previous working-directory rules. Module names, model repository IDs and URLs are not rewritten as local paths.
 
-## Cache latents and text
+## Caches and fixed validation
 
-Replace the model placeholders in these commands with the same paths used in `train.toml`:
+`auto_cache=true` prepares only missing compatible train/val caches using the configured VAE and Qwen3-VL encoder, then frees these models before loading DiT. Existing incompatible caches fail explicitly; new experiment modes reject old caches without sufficient source/model/preprocessing provenance. Do not reuse Qwen Image caches as Krea2 caches. With automatic caching disabled, all required compatible caches must already exist.
 
-```sh
-python krea2_cache_latents.py --dataset_config config_for_krea2_raw_lora/dataset.toml --vae REPLACE_WITH_QWEN_IMAGE_VAE.safetensors
-python krea2_cache_text_encoder_outputs.py --dataset_config config_for_krea2_raw_lora/dataset.toml --text_encoder REPLACE_WITH_QWEN3_VL_4B.safetensors --batch_size 1
-```
+Preflight checks effective defaults→TOML→CLI settings and data before loading models. It rejects incomplete validation settings, missing captions, empty data, train/val overlap by SHA-256 image content and conflicting validation duplicates. Compatible content copies count once. The fixed validation manifest includes captions, preprocessing/buckets, cache identities and noise/component settings; changes fail on resume and subsequent validation. Moving an unchanged experiment or renaming unchanged image content does not change its noise seed.
 
-Both passes use `cache/krea2_raw_lora` as configured in the dataset file. Re-cache when source images/captions or the corresponding model representations change. `--skip_existing` is useful only when existing caches remain valid. Inspect each command's `--help` for device, batching, worker and cache/debug options.
+Validation requires the explicit complete group `val_dataset_config`, `val_every_n_steps`, `val_seed_noise`, `val_level_noise_n`, `val_seed_noise_n`. Omit the entire group to disable validation. Period is an integer ≥1, seeds are integers, N1 is even ≥2 and N2 ≥1; booleans are rejected. New `experiment_mode` and `auto_cache` default to false.
 
-## Train and inspect Raw samples
+## Train, metrics and samples
+
+After verified model paths and the environment are prepared:
 
 ```sh
 accelerate launch --num_cpu_threads_per_process 1 --mixed_precision bf16 krea2_train_network.py --config_file config_for_krea2_raw_lora/train.toml
 ```
 
-The starter selects AdamW, a constant learning rate, bf16, SDPA, gradient checkpointing and resolution-aware `krea2_shift` timestep sampling. It writes LoRA checkpoints and resumable state every 200 steps, requests Raw samples every 200 steps and saves the final adapter/state under `output/krea2_raw_lora`.
+The main configuration retains AdamW, constant learning rate 0.0001, rank/alpha 32, bf16, SDPA, gradient checkpointing and training `krea2_shift`. It validates before training at optimizer step 0, every 200 completed optimizer steps and the final step if not already measured. Accumulation microbatches are not optimizer steps. The full training run is started by the user after the short diagnostics.
 
-Samples use the same Raw model with the current trained adapter. Prompt `--l` sets CFG; a negative prompt supplied by `--n` enables its unconditional branch. See [sample prompts](docs/sampling_during_training.md). Sample images are saved under the output directory's `sample` folder.
+TensorBoard reports `val_loss_mean`, `val_loss_low_noise` and `val_loss_high_noise` against completed optimizer steps. Each unique image has equal weight. For each image, ten fixed midpoint noise levels between 0.05 and 0.95 and two noise realizations are measured; low means t<0.5 and high means t≥0.5. These measure flow-matching prediction error, independently of visual sampling and CFG. Validation uses no training shift and preserves training RNG/state. See [numerical and reproducibility details](docs/krea2.md#fixed-validation-loss).
 
-The starter logs progress to the console. For TensorBoard, append `--logging_dir logs/krea2_raw_lora --log_with tensorboard`, with TensorBoard installed. W&B is available with `--log_with wandb` and its optional package/account configuration. [Advanced configuration](docs/advanced_config.md) describes logging, optimizers, adapter settings and saving.
+Without `turbo_dit`, samples retain the existing Raw model behavior. The supplied main config now opts into the distilled Turbo base for samples with the current trained LoRA; Raw weights are restored before training/validation continues. `--l` sets CFG; without `--n`, the unconditional branch encodes an empty string. `--l 1` disables CFG. The supplied prompts use supported flags only. Samples at a saved step belong to that checkpoint's `samples/`; samples without a checkpoint use separate explicitly numbered output. See [sampling](docs/sampling_during_training.md).
 
-## Resume
+The main config selects `turbo_dit="/workspace/models/Krea-2/diffusion_models/krea2_turbo_bf16.safetensors"` and `turbo_dit_cache=true`. The full Turbo file SHA256 and native BF16 GPU sampling acceptance passed in both resident and streaming modes. Turbo uses fixed mu=1.15; absent per-prompt settings default to 8 steps/CFG1, while explicit overrides remain respected. The ten supplied subjects now explicitly use those values without changing text, seed or dimensions. Only sampling changes: Raw training and deterministic Raw validation retain their previous mathematics and settings. See [Turbo sampling and memory](docs/krea2.md#turbo-samples-during-raw-training).
 
-Append a saved **state directory** to the same training command:
+Install TensorBoard with the existing dev dependency group, for example `uv sync --group dev` with your chosen compatible CUDA extra, or install `tensorboard` in the chosen environment. Then:
 
 ```sh
-accelerate launch --num_cpu_threads_per_process 1 --mixed_precision bf16 krea2_train_network.py --config_file config_for_krea2_raw_lora/train.toml --resume REPLACE_WITH_SAVED_STATE_DIRECTORY
+tensorboard --logdir config_for_krea2_raw_lora/output/tensorboard --host 0.0.0.0 --port 6006
 ```
 
-Keep compatible model, dataset and network settings. `--resume` restores Accelerate training state, including optimizer, scheduler and RNG. `--network_weights` initializes adapter weights only; it does not restore training state. Retain state directories along with the model/data settings needed to resume.
+The verified remote address and persistent service commands are recorded only after remote checks in [feature quickstart](specs/004-krea2-deterministic-val/quickstart.md).
+
+## Checkpoints and resume
+
+With `experiment_mode=true` and `save_state=true`, each completed save produces `output/krea2_raw_lora-step 000200/` containing one FP32 `model.safetensors`, optimizer/scheduler/per-process RNG state, exact train position, manifest and completed validation metadata, plus same-step samples. The adapter loads separately with `--network_weights`; that does not restore optimizer state. Resume uses the complete state directory:
+
+```sh
+accelerate launch --num_cpu_threads_per_process 1 --mixed_precision bf16 krea2_train_network.py --config_file config_for_krea2_raw_lora/train.toml --resume /absolute/path/to/krea2_raw_lora-step 000200
+```
+
+Use an actually completed checkpoint from the user experiment, never a diagnostic state. Model/data/topology settings must remain compatible. Resume restores completed optimizer count and consumed train position, and does not repeat an already recorded validation state. Restoring an older checkpoint branches logging to avoid mixing incompatible later trajectories. Incomplete writes are not valid checkpoints. The final actual step is saved once even when not periodic.
+
+In experiment mode, `save_last_n_steps` alone sets the optimizer-step retention window for the complete checkpoint folder: adapter weights, optimizer/scheduler/RNG state, metadata and samples. The main value is 1000; omitting it keeps all complete checkpoints. Whole outdated folders are removed using the existing interval-boundary rule. Ordinary mode retains its previous adapter/state formats.
+
+Local acceptance and required real GPU/remote diagnostics are tracked separately in [verification.md](specs/004-krea2-deterministic-val/verification.md). Diagnostic files live under [diagnostics](config_for_krea2_raw_lora/diagnostics/) and never replace main settings or user output.
 
 ## Optional settings
 

@@ -1,0 +1,10 @@
+# Data model
+
+- EffectiveConfig: source main TOML, explicitly supplied option set, resolved local paths; val group absent or complete. Period integer >=1; seeds integer; N1 even integer >=2; N2 integer >=1; boolean is not integer. experiment_mode/auto_cache default false.
+- ValidationRecord: image_sha256 (SHA-256 original bytes), caption fingerprint, canonical processing/bucket/dimensions, latent_cache_path, text_cache_path, component identities and cache content/provenance fingerprints. Path diagnostic only, never identity. Compatible duplicate content one record; incompatible caption/processing fails.
+- ValidationManifest: schema version, sorted unique records, fixed noise N1/N2/seeds/generator dtype/device, tokenizer/encoder/VAE identities and representations; canonical semantic digest excludes machine paths. Frozen at first start; immutable thereafter, including resume and each validation.
+- CacheProvenance: arch=krea2; source/caption/component/processing fingerprints, tensor keys/shapes/dtypes/normalization. Legacy unknown origin is invalid in new modes. Source width/height naming, not bucket width/height.
+- ValidationMetrics: per-image combination sums/counts → mean/low/high → global float64 sums and unique image count; exactly one published triple.
+- ExperimentState: completed_optimizer_steps, epoch, next_consumed_local_microbatch, epoch_start_generator_state, topology/batch/accumulation fingerprint, manifest digest, last completed validation step/metrics, per-process RNG and native optimizer/scheduler state.
+- UnifiedCheckpoint: staging→complete atomic readiness; exact-step folder and one FP32 adapter plus state/manifest/metadata/same-step samples. Retention threshold follows existing get_remove_step_no floor-to-save interval semantics; state window takes precedence, neither means unlimited. Never delete unrelated experiment directories.
+- EvidenceRecord: task IDs, command/version/config, actual result, artifact paths, passed/failed/unperformed/blocker, correction_round in {0,1,2}; no fabricated completion.

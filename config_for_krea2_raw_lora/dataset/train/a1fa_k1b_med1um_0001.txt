@@ -1,0 +1,1 @@
+The eye mask is in the center. The green code is displayed on the left on the surface of the mask. The interface element in the form of a circular loading indicator is displayed on the right on the surface of the mask.
